@@ -27,12 +27,12 @@ def read_ged_matches(path):
     return matches[GED_MATCH_COLS.keys()].rename(columns=GED_MATCH_COLS)
 
 GED_TRIANGLE_COLS = {
-    'Kit1 Number': 'kit1',
-    'Kit1 Name': 'name1',
-    'Kit1 Email': 'email1',
-    'Kit2 Number': 'kit2',
-    'Kit2 Name': 'name2',
-    'Kit2 Email': 'email2',
+    'Kit1 Number': 'kit2',
+    'Kit1 Name': 'name2',
+    'Kit1 Email': 'email2',
+    'Kit2 Number': 'kit3',
+    'Kit2 Name': 'name3',
+    'Kit2 Email': 'email3',
     'Chr': 'chromosome',
     'B37 Start': 'start',
     'B37 End': 'end',
@@ -51,5 +51,5 @@ def read_ged_triangles(path, primary_kit):
     dtype['B37 End'] = int
     tri = pd.read_csv(path, dtype=dtype)
     tri = tri[GED_TRIANGLE_COLS.keys()].rename(columns=GED_TRIANGLE_COLS)
-    tri['kit3'] = primary_kit
+    tri['kit1'] = primary_kit
     return tri

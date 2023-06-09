@@ -17,6 +17,6 @@ tree based on shared and unshared DNA.
 kgenealogic init [-p <project-file>]
 kgenealogic add [-p <project-file>] ... # files to import
 kgenealogic build [-p <project-file>] ... # kits with complete triangulations
-kgenealogic cluster [-p <project-file>] [-t <tree-file>] [-d <depth>] [-o <out-file>]
+kgenealogic cluster [-p <project-file>] [-d <depth>] [-o <out-file>] <tree-file>
 kgenealogic recommend
 ```

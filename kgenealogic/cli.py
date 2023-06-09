@@ -6,7 +6,7 @@ from typing import Optional, List
 from typing_extensions import Annotated
 import sys
 
-import pysqlite3
+import sqlalchemy as sql
 import typer
 
 import kgenealogic
@@ -21,6 +21,7 @@ warnings.filterwarnings("ignore",
 app = typer.Typer()
 
 DEFAULT_PROJECT = Path("kgenealogic.db")
+DEFAULT_PROJECT = Path("kg_results.yaml")
 PROJECT_OPTION = Annotated[
     Optional[Path],
     typer.Option(
@@ -49,8 +50,8 @@ def init(
         print("Project already exists. Use --force to reinitialize.")
         raise typer.Abort()
 
-    db = pysqlite3.connect(project)
-    kgenealogic.initialize(db)
+    engine = sql.create_engine(f"sqlite:///{project}")
+    kgenealogic.initialize(engine)
 
 @app.command()
 def add(
@@ -75,18 +76,18 @@ def add(
     For GEDmatch triangulation files, the source/primary kit number is not given in the data file
     and must be passed separately with the --source option
     """
-    db = pysqlite3.connect(project)
+    engine = sql.create_engine(f"sqlite:///{project}")
     for path in files:
         if kg_files.is_ged_matches(path):
             data = kg_files.read_ged_matches(path)
-            kgenealogic.import_matches(db, data)
+            kgenealogic.import_matches(engine, data)
         elif kg_files.is_ged_triangles(path):
             if not source:
                 print("Source kit number required for GEDmatch triangulation files, aborting.",
                       file=sys.stderr)
                 raise typer.Exit(code=1)
             data = kg_files.read_ged_triangles(path, source)
-            kgenealogic.import_triangles(db, data)
+            kgenealogic.import_triangles(engine, data)
         else:
             print(f"Unrecognized file type: {path}")
 
@@ -104,11 +105,10 @@ def build(
     - Finds all "negative" triangles, where two target kits have overlapping matching segments on a
     common source kit, but the segment does not appear as a triangulation for the three kits
     """
-    db = pysqlite3.connect(project)
+    engine = sql.create_engine(f"sqlite:///{project}")
     if not force:
-        if kgenealogic.is_cache_valid(db):
+        if kgenealogic.is_cache_valid(engine):
             print("Project is already built. Use --force to re-build")
             raise typer.Abort()
 
-    kgenealogic.build_cache(db)
-
+    kgenealogic.build_cache(engine)

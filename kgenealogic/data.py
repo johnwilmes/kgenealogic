@@ -1,128 +1,123 @@
-import importlib.resources
-import pysqlite3 as sql
+import sqlalchemy as sql
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 import pandas as pd
 
-def get_query(name):
-    return importlib.resources.files("kgenealogic").joinpath(f"sql/{name}.sql").read_text()
+import kgenealogic.schema as kg
+from kgenealogic.cache import invalidate_cache
 
-def initialize(db):
-    with db:
-        db.executescript(get_query("init_schema"))
+def add_sources(engine, sources, has_segments=None, has_triangles=None):
+    traits = {}
+    if has_segments is not None:
+        traits['has_segments'] = has_segments
+    if has_triangles is not None:
+        traits['has_triangles'] = has_triangles
+    stmt = sqlite_insert(kg.source).values(kit=sql.bindparam('kit'), **traits)
+    if traits:
+        stmt = stmt.on_conflict_do_update(index_elements=['kit'], set_=traits)
+    else:
+        stmt = stmt.on_conflict_do_nothing(index_elements=['kit'])
 
-def is_cache_valid(db):
-    is_valid = db.execute("SELECT value FROM kgenealogic WHERE key='cache_valid'").fetchone()[0]
-    return bool(int(is_valid))
+    with engine.connect() as conn:
+        conn.execute(stmt, [dict(kit=x) for x in sources])
+        conn.commit()
 
-def import_matches(db, matches):
-    """ matches fields: kit1, kit2, chromosome, start, end, length, name, email, sex"""
+def as_internal_kitid(engine, data, kitid_fields):
+    kit_ids = pd.concat([data[c] for c in kitid_fields]).drop_duplicates()
+    insert_kit_id = kg.kit.insert().values(kitid=sql.bindparam('kit'))
+    select_kit_id = sql.select(kg.kit.c["id", "kitid"])
+    with engine.connect() as conn:
+        conn.execute(insert_kit_id, [dict(kit=x) for x in kit_ids])
+        conn.commit()
+        kit_ids = pd.read_sql(select_kit_id, conn)
 
-    kit_ids = pd.concat([matches.kit1, matches.kit2]).drop_duplicates()
-    insert_kit_id = "INSERT INTO kit (kitid) VALUES (?)"
-    with db:
-        db.executescript(get_query("invalidate_cache"))
-        db.executemany(insert_kit_id, kit_ids.to_numpy().reshape((-1,1)))
+    kit_ids = kit_ids.set_index('kitid')['id']
+    for c in kitid_fields:
+        data = data.assign(**{c: data[c].map(kit_ids)})
+    return data
 
-    select_kit_id = "SELECT id, kitid FROM kit"
-    kit_ids = pd.read_sql(select_kit_id, db)
-    matches = (
-        matches
-        .merge(kit_ids.rename(columns=dict(kitid='kit1')), on='kit1')
-        .drop(columns='kit1')
-        .rename(columns=dict(id='kit1'))
-        .merge(kit_ids.rename(columns=dict(kitid='kit2')), on='kit2')
-        .drop(columns='kit2')
-        .rename(columns=dict(id='kit2'))
+def as_internal_segment(engine, data, imputed=False):
+    segments = (
+        data[["chromosome", "start", "end", "length"]]
+        .groupby(["chromosome", "start", "end"])
+        .head(1)
+        .assign(imputed=imputed)
     )
+    select_segment_ids = sql.select(kg.segment.c.id.label("segment"), kg.segment.c["chromosome", "start", "end"])
+    with engine.connect() as conn:
+        segments.to_sql("segment", conn, if_exists="append", index=False)
+        conn.commit()
+        segment_ids = pd.read_sql(select_segment_ids, conn)
+
+    data = data.merge(segment_ids, on=["chromosome", "start", "end"])
+    return data
+
+def update_kit_data(engine, kit_data):
+    insert_kit_data = (
+        kg.kit.update()
+        .where(kg.kit.c.id==sql.bindparam("kit"))
+        .where(kg.kit.c.sex.is_(None))
+        .values(
+            name=sql.bindparam("name"),
+            email=sql.bindparam("email"),
+            sex=sql.bindparam("sex"),
+        )
+    )
+    with engine.connect() as conn:
+        conn.execute(insert_kit_data, kit_data.to_dict(orient='records'))
+        conn.commit()
+
+def import_matches(engine, matches):
+    """ matches fields: kit1, kit2, chromosome, start, end, length, name, email, sex"""
+    invalidate_cache(engine)
+
+    matches = as_internal_kitid(engine, matches, ['kit1', 'kit2'])
 
     kit_data = (
         matches[['kit2', 'name', 'email', 'sex']]
         .groupby(['kit2'])
         .head(1)
         .drop_duplicates()
+        .rename(columns=dict(kit2='kit'))
     )
-    insert_kit_data = """
-        UPDATE kit SET name=:name, email=:email, sex=:sex
-        WHERE id=:kit2 AND sex IS NULL
-    """
-    with db:
-        db.executemany(insert_kit_data, kit_data.to_dict(orient='records'))
+    update_kit_data(engine, kit_data)
 
-    segments = (
-        matches[["chromosome", "start", "end", "length"]]
-        .groupby(["chromosome", "start", "end"])
-        .head(1)
-    )
-    insert_segments = """
-        INSERT INTO segment (chromosome, start, end, length)
-        VALUES (:chromosome, :start, :end, :length)
-    """
-    with db:
-        db.executemany(insert_segments, segments.to_dict(orient='records'))
-    select_segment_ids = "SELECT id AS segment, chromosome, start, end FROM segment"
-    segment_ids = pd.read_sql(select_segment_ids, db)
-    matches = matches.merge(segment_ids, on=["chromosome", "start", "end"])
+    sources = matches['kit1'].drop_duplicates()
+    add_sources(engine, sources, has_segments=True)
+
+    matches = as_internal_segment(engine, matches)
 
     matches = matches[['kit1', 'kit2', 'segment']]
     matches = pd.concat([matches, matches.rename(columns=dict(kit1='kit2', kit2='kit1'))],
                         ignore_index=True)
-    insert_matches = "INSERT INTO match (segment, kit1, kit2) VALUES (:segment, :kit1, :kit2)"
-    with db:
-        db.executemany(insert_matches, matches.to_dict(orient='records'))
+    with engine.connect() as conn:
+        matches.to_sql("match", conn, if_exists="append", index=False)
+        conn.commit()
 
-def import_triangles(db, triangles):
-    kit_ids = pd.concat([triangles.kit1, triangles.kit2, triangles.kit3]).drop_duplicates()
-    insert_kit_id = "INSERT INTO kit (kitid) VALUES (?)"
-    with db:
-        db.executescript(get_query("invalidate_cache"))
-        db.executemany(insert_kit_id, kit_ids.to_numpy().reshape((-1,1)))
 
-    select_kit_id = "SELECT id, kitid FROM kit"
-    kit_ids = pd.read_sql(select_kit_id, db)
-    triangles = (
-        triangles
-        .merge(kit_ids.rename(columns=dict(kitid='kit1')), on='kit1')
-        .drop(columns='kit1')
-        .rename(columns=dict(id='kit1'))
-        .merge(kit_ids.rename(columns=dict(kitid='kit2')), on='kit2')
-        .drop(columns='kit2')
-        .rename(columns=dict(id='kit2'))
-        .merge(kit_ids.rename(columns=dict(kitid='kit3')), on='kit3')
-        .drop(columns='kit3')
-        .rename(columns=dict(id='kit3'))
-    )
+def import_triangles(engine, triangles):
+    invalidate_cache(engine)
+
+    triangles = as_internal_kitid(engine, triangles, ['kit1', 'kit2', 'kit3'])
 
     kit_data = (
         pd.concat([
-            triangles[['kit1', 'name1', 'email1']].rename(
-                columns=dict(kit1='kit', name1='name', email1='email')
-            ),
             triangles[['kit2', 'name2', 'email2']].rename(
                 columns=dict(kit2='kit', name2='name', email2='email')
             ),
+            triangles[['kit3', 'name3', 'email3']].rename(
+                columns=dict(kit3='kit', name3='name', email3='email')
+            ),
         ], ignore_index=True)
         .dropna()
+        .drop_duplicates()
     )
-    insert_kit_data = """
-        UPDATE kit SET name=:name, email=:email
-        WHERE id=:kit AND name IS NULL
-    """
-    with db:
-        db.executemany(insert_kit_data, kit_data.to_dict(orient='records'))
+    kit_data['sex'] = None
+    update_kit_data(engine, kit_data)
 
-    segments = (
-        triangles[["chromosome", "start", "end", "length"]]
-        .groupby(["chromosome", "start", "end"])
-        .head(1)
-    )
-    insert_segments = """
-        INSERT INTO segment (chromosome, start, end, length)
-        VALUES (:chromosome, :start, :end, :length)
-    """
-    with db:
-        db.executemany(insert_segments, segments.to_dict(orient='records'))
-    select_segment_ids = "SELECT id AS segment, chromosome, start, end FROM segment"
-    segment_ids = pd.read_sql(select_segment_ids, db)
-    triangles = triangles.merge(segment_ids, on=["chromosome", "start", "end"])
+    sources = triangles['kit1'].drop_duplicates()
+    add_sources(engine, sources, has_triangles=True)
+
+    triangles = as_internal_segment(engine, triangles)
 
     triangles = triangles[['kit1', 'kit2', 'kit3', 'segment']]
     triangles = pd.concat([
@@ -133,9 +128,9 @@ def import_triangles(db, triangles):
             triangles.rename(columns=dict(kit1='kit2', kit2='kit3', kit3='kit1')),
             triangles.rename(columns=dict(kit1='kit3', kit2='kit1', kit3='kit2')),
         ], ignore_index=True)
-    insert_triangles ="""
-        INSERT INTO triangle (segment, kit1, kit2, kit3)
-        VALUES (:segment, :kit1, :kit2, :kit3)
-    """
-    with db:
-        db.executemany(insert_triangles, triangles.to_dict(orient='records'))
+    with engine.connect() as conn:
+        triangles.to_sql("triangle", conn, if_exists="append", index=False)
+        conn.commit()
+
+
+__all__ = [import_matches, import_triangles]
