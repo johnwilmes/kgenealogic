@@ -1,5 +1,8 @@
 import pandas as pd
+import strictyaml as yaml
 from collections import defaultdict
+from dataclasses import dataclass, field
+import typing
 
 GED_MATCH_COLS = {
     'PrimaryKit': 'kit1',
@@ -53,3 +56,43 @@ def read_ged_triangles(path, primary_kit):
     tri = tri[GED_TRIANGLE_COLS.keys()].rename(columns=GED_TRIANGLE_COLS)
     tri['kit1'] = primary_kit
     return tri
+
+CLUSTER_TREE_SCHEMA = yaml.Map({
+    yaml.Optional('kits'): yaml.UniqueSeq(yaml.Str()),
+    yaml.Optional('maternal'): yaml.Any(),
+    yaml.Optional('paternal'): yaml.Any(),
+})
+CLUSTER_CONFIG_SCHEMA = yaml.Map({
+    yaml.Optional('exclude'): yaml.UniqueSeq(yaml.Str()),
+    yaml.Optional('min_length'): yaml.Float(),
+    'tree': CLUSTER_TREE_SCHEMA,
+})
+
+@dataclass
+class ClusterConfig:
+    """Data structure for storing parsed cluster configuration"""
+    exclude: list[str]
+    min_length: float
+    tree: dict[str, typing.Any]
+
+def validate_config_tree(config):
+    for branch in ('maternal', 'paternal'):
+        if branch in config.data:
+            config[branch].revalidate(CLUSTER_TREE_SCHEMA)
+            validate_config_tree(config[branch])
+
+def read_cluster_config(path):
+    with open(path) as f:
+        config_yaml = f.read()
+    parsed = yaml.load(config_yaml, CLUSTER_CONFIG_SCHEMA)
+    validate_config_tree(parsed['tree'])
+
+    result =  ClusterConfig(
+        exclude=parsed.data.get('exclude', []),
+        min_length=parsed.data.get('min_length', 7.),
+        tree=parsed['tree'].data,
+    )
+    return result
+
+def write_clusters(clusters, path):
+    clusters.to_csv(path, index=False)

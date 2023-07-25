@@ -45,19 +45,19 @@ segment = sql.Table(
 match = sql.Table(
     "match",
     metadata,
-    sql.Column("segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False),
-    sql.Column("kit1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False),
-    sql.Column("kit2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False),
+    sql.Column("segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
+    sql.Column("kit1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
+    sql.Column("kit2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.UniqueConstraint("segment", "kit1", "kit2", sqlite_on_conflict='IGNORE'),
 )
 
 triangle = sql.Table(
     "triangle",
     metadata,
-    sql.Column("segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False),
-    sql.Column("kit1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False),
-    sql.Column("kit2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False),
-    sql.Column("kit3", sql.Integer, sql.ForeignKey("kit.id"), nullable=False),
+    sql.Column("segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
+    sql.Column("kit1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
+    sql.Column("kit2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
+    sql.Column("kit3", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.UniqueConstraint("segment", "kit1", "kit2", "kit3", sqlite_on_conflict='IGNORE'),
 )
 
@@ -76,21 +76,21 @@ partition = sql.Table(
 segment_partition = sql.Table(
     "segment_partition",
     metadata,
-    sql.Column("segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False),
-    sql.Column("partition", sql.Integer, sql.ForeignKey("partition.id"), nullable=False),
+    sql.Column("segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
+    sql.Column("partition", sql.Integer, sql.ForeignKey("partition.id"), nullable=False, index=True),
     sql.UniqueConstraint("segment", "partition"),
 )
 
 negative = sql.Table(
     "negative",
     metadata,
-    sql.Column("source", sql.Integer, sql.ForeignKey("source.kit"), nullable=False),
-    sql.Column("target1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False),
-    sql.Column("target2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False),
-    sql.Column("segment1", sql.Integer, sql.ForeignKey("segment.id"), nullable=False),
-    sql.Column("segment2", sql.Integer, sql.ForeignKey("segment.id"), nullable=False),
-    sql.Column("overlap_segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False),
-    sql.Column("neg_segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False),
+    sql.Column("source", sql.Integer, sql.ForeignKey("source.kit"), nullable=False, index=True),
+    sql.Column("target1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
+    sql.Column("target2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
+    sql.Column("segment1", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
+    sql.Column("segment2", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
+    sql.Column("overlap_segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
+    sql.Column("neg_segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
     sql.UniqueConstraint("source", "target1", "target2", "neg_segment", sqlite_on_conflict='IGNORE'),
 )
 

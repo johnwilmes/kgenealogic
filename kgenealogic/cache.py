@@ -73,7 +73,7 @@ def build_partition(segments):
 
     return partition
 
-def build_cache(engine, sources=None):
+def build_cache(engine):
     clear_cache(engine)
     # get segments
     # build partition
@@ -168,17 +168,7 @@ def build_cache(engine, sources=None):
         conn.execute(set_partition_length, cells[['id', 'length']].rename(columns=dict(id="b_id")).to_dict(orient="records"))
         conn.commit()
 
-    if sources is not None:
-        values = sql.values(sql.column('kit', sql.Integer)).data([(x,) for x in sources])
-        source_table = sql.select(values).cte()
-        label_sources = (
-            sql.update(source)
-            .where(source.c.kit==source_table.c.kit)
-            .values(has_negative=True)
-        )
-    else:
-        source_table = source
-        label_sources = sql.update(source).values(has_negative=True)
+    label_sources = sql.update(source).values(has_negative=True)
 
     m1, m2 = match.alias(), match.alias()
     s1, s2, st = segment.alias(), segment.alias(), segment.alias()
@@ -195,7 +185,7 @@ def build_cache(engine, sources=None):
             st.c.start.label("start_pos"),
             st.c.end.label("end_pos"),
         )
-        .join_from(source_table, m1, m1.c.kit1==source_table.c.kit)
+        .join_from(source, m1, m1.c.kit1==source.c.kit)
         .join(m2, m1.c.kit1==m2.c.kit1)
         .join(s1, m1.c.segment==s1.c.id)
         .join(s2, m2.c.segment==s2.c.id)

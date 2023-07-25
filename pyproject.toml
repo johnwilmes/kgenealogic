@@ -14,6 +14,7 @@ pandas = "^2.0.1"
 osqp = "^0.6.2.post9"
 typer = "^0.9.0"
 sqlalchemy = "^2.0.15"
+strictyaml = "^1.7.3"
 
 
 [build-system]
