@@ -7,13 +7,14 @@ tree based on shared and unshared DNA.
 
 - Supports GEDmatch pairwise segment and triangulation files
 - Uses both presence and inferred absence of triangulation
-- Allows, but doesn't require, specifying known relatives at each node of the family tree
+- Infers crossover probabilities on derived segments
+- Allows, but doesn't require, specifying known relatives at each level of the family tree
 
 ## Usage
 
 ```
 kgenealogic init [-p <project-file>]
 kgenealogic add [-p <project-file>] ... # files to import
-kgenealogic build [-p <project-file>] ... # kits with complete triangulations
-kgenealogic cluster [-p <project-file>] [-d <depth>] [-o <out-file>] <tree-file>
+kgenealogic build [-p <project-file>] ... # build crossover probability model and find negative triangulations
+kgenealogic cluster [-p <project-file>] [-o <out-file>] <config-file>
 ```
