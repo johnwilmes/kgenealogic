@@ -8,6 +8,9 @@ import typer
 
 from kgenealogic.schema import *
 
+# factor for weighting pairwise matches in the graph; triangles have weight 1
+PAIRWISE_FACTOR = 0.25
+
 @dataclass
 class SeedTree:
     """Data structure for organizing cluster seeds in tree"""
@@ -55,7 +58,7 @@ def cluster_data(engine, config):
         graph = pd.read_sql(graph_query, conn)
     kitids = kits.reset_index().set_index('id').kitid
 
-    graph['weight'] = 0.1*graph['weight'].astype(float)
+    graph['weight'] = PAIRWISE_FACTOR*graph['weight'].astype(float)
 
     root_kits = []
     for kitid in config.tree.get('kits', []):
