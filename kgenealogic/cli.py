@@ -171,10 +171,30 @@ def cluster(
       each node of the of the tree. The more accurate seeds are available, the more reliable and
       useful the results will be. This root node of the tree is specified with the "tree" key. At
       each node of the tree, you can optionally specify any of:
-      1. a "kits" key, associated with a list of kit numbers known to reside at that node of the tree
+      1. a "kits" key, associated with a list of kit numbers known to reside at that node of the
+      tree. See below for additional options.
       2. a "paternal" key, formatted as a node of the tree, specifying the paternal branch
       2. a "maternal" key, formatted as a node of the tree, specifying the maternal branch
       The tree key is required
+
+    Entries of each "kits" list of the tree can be specified in one of two ways:
+
+    - just the kit number as a string
+    - a mapping with the following keys:
+      -- id: the kit number as a string (required)
+      -- autox: whether to classify kits that match this kit on the X chromosome as necessarily
+      maternal (optional, boolean). If the kit corresponds to a male child of the parents
+      represented by the paternal and maternal branches of this node of the tree, it makes sense to
+      use a value of true. Otherwise omit the key or set it to false (the default)
+      -- float: whether to keep the kit at this node of the tree, or attempt to float it into the
+      branches (optional, boolean). If float is false, this seed will be kept at this node of the
+      tree - this is desired when the kit is known to be a descendant of the parents represented by
+      the maternal and paternal branches at this node. If float is true, this seed will be pushed
+      out as far as possible into the branches - this is desired when the kit's relation to the
+      root is partially but not completely known (e.g., the kit is some relative of the maternal
+      grandfather, but nothing more is known). Trianglulations for which the kit is the source are
+      NOT used if float is set to true. If float is not set, the default behavior is to treat it as
+      false if triangulations are available, and otherwise treat it as true.
 
     For example:
 
@@ -184,8 +204,13 @@ def cluster(
     min_length: 8.5
     tree:
       kits:
-        - T000003 # me
-        - T000004 # my nephew
+        - # me (male)
+          id: T000003
+          autox: true
+          float: false
+        - # my sister's son
+          id: T000004
+          float: false
       paternal:
         kits:
           - T000004 # my father's grand-niece
@@ -214,3 +239,4 @@ def cluster(
     config = kg_files.read_cluster_config(config)
     clusters = kgenealogic.cluster_data(engine, config)
     kg_files.write_clusters(clusters, outfile)
+

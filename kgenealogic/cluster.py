@@ -25,7 +25,8 @@ def build_seed_tree(kits, tree, config):
     for short, long in (('M', 'maternal'), ('P', 'paternal')):
         if long in config:
             child_kits = []
-            for kitid in config[long].get('kits', []):
+            for k in config[long]['kits']:
+                kitid = k['id']
                 if kitid not in kits.index:
                     warn_invalid_kitid(kitid)
                 else:
@@ -61,7 +62,8 @@ def cluster_data(engine, config):
     graph['weight'] = PAIRWISE_FACTOR*graph['weight'].astype(float)
 
     root_kits = []
-    for kitid in config.tree.get('kits', []):
+    for k in config.tree.get('kits', []):
+        kitid = k['id']
         if kitid not in kits.index:
             warn_invalid_kitid(kitid)
         else:

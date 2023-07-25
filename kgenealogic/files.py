@@ -57,13 +57,18 @@ def read_ged_triangles(path, primary_kit):
     tri['kit1'] = primary_kit
     return tri
 
+CLUSTER_KIT_SCHEMA = yaml.Str() | yaml.Map({
+    'id': yaml.Str(),
+    yaml.Optional('autox', default=False): yaml.Bool(),
+    yaml.Optional('float', default=None, drop_if_none=False): yaml.EmptyNone() | yaml.Bool(),
+})
 CLUSTER_TREE_SCHEMA = yaml.Map({
-    yaml.Optional('kits'): yaml.UniqueSeq(yaml.Str()),
+    yaml.Optional('kits'): yaml.EmptyList() | yaml.Seq(CLUSTER_KIT_SCHEMA),
     yaml.Optional('maternal'): yaml.Any(),
     yaml.Optional('paternal'): yaml.Any(),
 })
 CLUSTER_CONFIG_SCHEMA = yaml.Map({
-    yaml.Optional('exclude'): yaml.UniqueSeq(yaml.Str()),
+    yaml.Optional('exclude'): yaml.EmptyList() | yaml.UniqueSeq(yaml.Str()),
     yaml.Optional('min_length'): yaml.Float(),
     'tree': CLUSTER_TREE_SCHEMA,
 })
@@ -76,6 +81,14 @@ class ClusterConfig:
     tree: dict[str, typing.Any]
 
 def validate_config_tree(config):
+    expanded_kits = []
+    for k in config.data.get('kits', []):
+        if type(k)==str:
+            expanded_kits.append(dict(id=k, autox=False, float=None))
+        else:
+            expanded_kits.append(k)
+    config['kits']=expanded_kits
+
     for branch in ('maternal', 'paternal'):
         if branch in config.data:
             config[branch].revalidate(CLUSTER_TREE_SCHEMA)
