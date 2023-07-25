@@ -17,4 +17,55 @@ kgenealogic init [-p <project-file>]
 kgenealogic add [-p <project-file>] ... # files to import
 kgenealogic build [-p <project-file>] ... # build crossover probability model and find negative triangulations
 kgenealogic cluster [-p <project-file>] [-o <out-file>] <config-file>
+
+kgenealogic --help # general help
+kgenealogic --help <command> # help for <command>, e.g. init/add/build/cluster
 ```
+
+## Algorithms
+
+### Clustering
+
+Clustering is performed by recursive spectral approximation of a min-cut of a genetic closeness
+graph.
+
+Specifically, the sums of the (cM) lengths of pairwise matches form the edge-weights of a base
+graph. We add to these weights the positive and negative lengths of triangulations for which the
+"source" kit of the triangle is listed as a "seed" in the clustering configuration file. When
+processing a particular node of the tree, we use triangulations for seeds at that node or on its
+path to the root (descendants when viewed as a family tree, ancestors when viewed as a tree data
+structure).
+
+Having formed this graph at a particular node of the tree, we consider seeds listed in the
+clustering configuration in the maternal or paternal branches of the node. For each connected
+component of the graph, if there is at least one seed present in the component, we find an
+approximate minimum cut separating the maternal and paternal seeds. Specifically, we use the
+minimum cut compatible with the vertex ordering of the non-seeds given by the principal eigenvalue.
+If there are only, e.g., maternal seeds present and no negative weights (from imputed negative
+triangulations), then the entire component will be classified as maternal.
+
+Kits that are classified as either maternal or paternal at a particular node are considered
+recursively in the maternal or paternal branches of that mode.
+
+### Inferred negative triangulations
+
+Suppose triangulations and pairwise matches are available for a kit S. And suppose there are kits
+T1 and T2 that each match pairwise with kit S on a particular segment, but fail to triangulate with
+S on that segment. Then we have a negative triangulation for source S between T1 and T2, indicating
+that T1 and T2 likely belong to different branches of the tree. This is represented with a negative
+weight between T1 and T2 in the graph used for clustering.
+
+We find all negative triangulations for kits S whose triangulations and pairwise matches are
+available. This is somewhat computationally expensive, because the segments where negative
+triangulations occur are generally sub-segments of those appearing in the data files. It also means
+we need a method of inferring crossover probabilities so we can assign accurate cM lengths to these
+segments.
+
+### Inferred crossover probabilities
+
+It's not clear to me what model of crossover probability GEDmatch uses, and at some point we might
+want to allow using other data sources with different models. So we infer an approximation of the
+crossover probabilities used to generate the imported data files. This is done by finding the
+coarsest partition of each chromosome that refines all listed segments, and solving a quadratic
+program to reproduce the cM lengths given in the imported data from lengths for the partition
+cells.
