@@ -3,6 +3,7 @@ import strictyaml as yaml
 from collections import defaultdict
 from dataclasses import dataclass, field
 import typing
+import typer
 
 GED_MATCH_COLS = {
     'PrimaryKit': 'kit1',
@@ -79,8 +80,9 @@ class ClusterConfig:
     exclude: list[str]
     min_length: float
     tree: dict[str, typing.Any]
+    seeds: set[str]
 
-def validate_config_tree(config):
+def validate_config_tree(config, seeds):
     expanded_kits = []
     for k in config.data.get('kits', []):
         if type(k)==str:
@@ -88,22 +90,39 @@ def validate_config_tree(config):
         else:
             expanded_kits.append(k)
     config['kits']=expanded_kits
+    seeds.extend(expanded_kits)
 
     for branch in ('maternal', 'paternal'):
         if branch in config.data:
             config[branch].revalidate(CLUSTER_TREE_SCHEMA)
-            validate_config_tree(config[branch])
+            validate_config_tree(config[branch], seeds)
 
 def read_cluster_config(path):
     with open(path) as f:
         config_yaml = f.read()
     parsed = yaml.load(config_yaml, CLUSTER_CONFIG_SCHEMA)
-    validate_config_tree(parsed['tree'])
+    seeds = []
+    validate_config_tree(parsed['tree'], seeds)
+    exclude = parsed.data.get('exclude', [])
+
+    unique_seeds = set()
+    for s in seeds:
+        if s['id'] in unique_seeds:
+            typer.echo("duplicated seed {}".format(s['id']), err=True)
+            raise typer.Exit(code=1)
+        else:
+            unique_seeds.add(s['id'])
+    exclude_seeds = unique_seeds.intersection(exclude)
+    if exclude_seeds:
+        k = exclude_seeds.pop()
+        typer.echo(f"excluded kit {k} is listed as seed", err=True)
+        raise typer.Exit(code=1)
 
     result =  ClusterConfig(
-        exclude=parsed.data.get('exclude', []),
+        exclude=exclude,
         min_length=parsed.data.get('min_length', 7.),
         tree=parsed['tree'].data,
+        seeds=unique_seeds,
     )
     return result
 

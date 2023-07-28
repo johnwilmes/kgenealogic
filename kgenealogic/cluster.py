@@ -12,33 +12,21 @@ from kgenealogic.schema import *
 PAIRWISE_FACTOR = 0.25
 
 @dataclass
+class Seed:
+    kit: int
+    floating: bool = field(default_factory=bool)
+
+@dataclass
 class SeedTree:
     """Data structure for organizing cluster seeds in tree"""
-    values: list[int] = field(default_factory=list)
-    branch: dict[str, typing.Any] = field(default_factory=dict)
-
-
-def warn_invalid_kitid(kitid):
-    typer.echo(f"Invalid kit id {kitid}", err=True)
-
-def build_seed_tree(kits, tree, config):
-    for short, long in (('M', 'maternal'), ('P', 'paternal')):
-        if long in config:
-            child_kits = []
-            for k in config[long]['kits']:
-                kitid = k['id']
-                if kitid not in kits.index:
-                    warn_invalid_kitid(kitid)
-                else:
-                    child_kits.append(kits.loc[kitid])
-            child = SeedTree(values=child_kits)
-            tree.branch[short] = child
-            build_seed_tree(kits, child, config[long])
+    values: list[Seed] = field(default_factory=list)
+    branches: dict[str, typing.Any] = field(default_factory=dict)
 
 def flatten(tree, values):
-    for b in tree.branch.values():
+    for b in tree.branches.values():
         flatten(b, values)
-    values.extend(tree.values)
+    values.extend([v.kit for v in tree.values])
+    return values
 
 def cluster_data(engine, config):
     kits_query = sql.select(kit.c['id', 'kitid'])
@@ -53,42 +41,71 @@ def cluster_data(engine, config):
         .where(match.c.kit1 != match.c.kit2)
         .group_by(match.c.kit1, match.c.kit2)
     )
+    trisource_query = (
+        sql.select(source.c.kit)
+        .where(source.c.has_triangles)
+        .where(source.c.has_negative)
+    )
+    autox_query = (
+        sql.select(sql.distinct(match.c.kit2).label('kit'))
+        .join_from(match, segment, match.c.segment==segment.c.id)
+        .where(segment.c.chromosome=='X')
+        .where(segment.c.length >= config.min_length)
+        .where(match.c.kit1==sql.bindparam('seed'))
+   )
 
     with engine.connect() as conn:
         kits = pd.read_sql(kits_query, conn).set_index('kitid').id
+        trisource= set(int(x) for x in pd.read_sql(trisource_query, conn).kit)
         graph = pd.read_sql(graph_query, conn)
-    kitids = kits.reset_index().set_index('id').kitid
 
     graph['weight'] = PAIRWISE_FACTOR*graph['weight'].astype(float)
 
-    root_kits = []
-    for k in config.tree.get('kits', []):
-        kitid = k['id']
-        if kitid not in kits.index:
-            warn_invalid_kitid(kitid)
-        else:
-            root_kits.append(kits.loc[kitid])
+    seeds = set()
+    exclude = set()
+    for kitid_list, kit_set in ((config.seeds, seeds), (config.exclude, exclude)):
+        for kitid in kitid_list:
+            if kitid not in kits.index:
+                typer.echo(f"Invalid kit id {kitid}", err=True)
+                raise typer.Exit(code=1)
+            else:
+                kit_set.add(int(kits.loc[kitid]))
 
-    seeds = SeedTree(values=root_kits)
-    build_seed_tree(kits, seeds, config.tree)
+    kits = kits[~kits.index.isin(exclude)]
 
-    for kitid in config.exclude:
-        if kitid not in kits.index:
-            warn_invalid_kitid(kitid)
-    kits = kits[~kits.index.isin(config.exclude)]
+    def build_seed_tree(raw):
+        parsed = SeedTree()
+        autox = set()
+        for k in raw.get('kits', []):
+            kitlocal = int(kits.loc[k['id']])
+            floating = k['float']
+            if floating is None:
+                floating = kitlocal not in trisource
+            if k['autox']:
+                with engine.connect() as conn:
+                    k_autox = pd.read_sql(autox_query, conn, params=dict(seed=kitlocal))
+                k_autox = set(int(x) for x in k_autox.kit)
+                k_autox.difference_update(exclude)
+                k_autox.difference_update(seeds)
+                seeds.update(k_autox)
+                autox.update(k_autox)
+            parsed.values.append(Seed(kit=kitlocal, floating=floating))
 
-    flat_seeds = []
-    flatten(seeds, flat_seeds)
-    unique_seeds = set()
-    for s in flat_seeds:
-        if s in unique_seeds:
-            typer.echo("Duplicated seed {}".format(kitids.loc[s]), err=True)
-        else:
-            unique_seeds.add(s)
+        for short, long in (('M', 'maternal'), ('P', 'paternal')):
+            if long in raw:
+                parsed.branches[short] = build_seed_tree(raw[long])
 
-    source_tri = lambda source: get_triangles(engine, int(source), config.min_length)
-    clusters = recursive_cluster(kits, seeds, graph, source_tri)
+        if autox:
+            maternal_values = parsed.branches.setdefault('M', SeedTree(values=[])).values
+            for x in autox:
+                maternal_values.append(Seed(kit=x, floating=True))
+        return parsed
+    tree = build_seed_tree(config.tree)
 
+    source_tri = lambda source: get_triangles(engine, source, config.min_length)
+    clusters = recursive_cluster(kits, tree, graph, source_tri)
+
+    kitids = kits.reset_index().set_index('id').kitid
     clusters['kit'] = clusters.kit.map(kitids)
 
     return clusters
@@ -130,39 +147,44 @@ def get_triangles(engine, source, min_length):
         result = pd.read_sql(sum_tri, conn)
     return result
 
-def recursive_cluster(kits, seeds, graph, source_tri):
+def recursive_cluster(kits, tree, graph, source_tri):
     # graph format: kit1/kit2/weight
     # initial value: all pairwise matches, suitably weighted relative to triangles that will be added?
-    for source in seeds.values:
-        graph = graph.set_index(['kit1', 'kit2']).add(
-            source_tri(source).set_index(['kit1', 'kit2']), fill_value=0
-        ).reset_index()
+    nonfloat = []
+    for source in tree.values:
+        if not source.floating:
+            graph = graph.set_index(['kit1', 'kit2']).add(
+                source_tri(source.kit).set_index(['kit1', 'kit2']), fill_value=0
+            ).reset_index()
+            nonfloat.append(source.kit)
         
-    kits = kits[~kits.isin(seeds.values)]
+    kits = kits[~kits.isin(nonfloat)]
     graph = graph[graph.kit1.isin(kits)&graph.kit2.isin(kits)]
     
-    paternal_seeds = []
-    maternal_seeds = []
-    if 'P' in seeds.branch:
-        flatten(seeds.branch['P'], paternal_seeds)
-    if 'M' in seeds.branch:
-        flatten(seeds.branch['M'], maternal_seeds)
-    
-    paternal_seeds = pd.DataFrame(dict(kit=paternal_seeds))
-    paternal_seeds['label'] = 'P'
-    maternal_seeds = pd.DataFrame(dict(kit=maternal_seeds))
-    maternal_seeds['label'] = 'M'
-    flat_seeds = pd.concat([paternal_seeds, maternal_seeds], ignore_index=True)
+    if tree.branches:
+        flat_seeds = []
+        for label, branch in tree.branches.items():
+            branch_seeds = flatten(branch, [])
+            branch_seeds = pd.DataFrame(dict(kit=branch_seeds))
+            branch_seeds['label'] = label
+            flat_seeds.append(branch_seeds)
+        flat_seeds = pd.concat(flat_seeds, ignore_index=True)
+        clusters = get_clusters(graph, flat_seeds)
 
-    clusters = get_clusters(graph, flat_seeds)
-    
-    for label, branch in clusters.groupby('label'):
-        if label in seeds.branch:
-            branch = recursive_cluster(branch.kit, seeds.branch[label], graph, source_tri)
+        for label in tree.branches:
+            branch = clusters[clusters.label==label]
             if len(branch) > 0:
-                branch_labels = (label + clusters.kit.map(branch.set_index('kit').label))
+                branch = recursive_cluster(branch.kit, tree.branches[label], graph, source_tri)
+                branch_labels = label + clusters.kit.map(branch.set_index('kit').label)
                 clusters.label.where(branch_labels.isnull(), branch_labels, inplace=True)
-    return clusters
+    else:
+        clusters = pd.DataFrame(dict(kit=kits))
+        clusters['label'] = ''
+
+    nonfloat = pd.DataFrame(dict(kit=nonfloat))
+    nonfloat['label'] = ''
+
+    return pd.concat([clusters, nonfloat], ignore_index=True)
 
 def get_adjacency(edges, weights):
     vertex_to_id = (
