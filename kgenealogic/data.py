@@ -35,12 +35,11 @@ def as_internal_kitid(engine, data, kitid_fields):
         data = data.assign(**{c: data[c].map(kit_ids)})
     return data
 
-def as_internal_segment(engine, data, imputed=False):
+def as_internal_segment(engine, data):
     segments = (
-        data[["chromosome", "start", "end", "length"]]
+        data[["chromosome", "start", "end"]]
         .groupby(["chromosome", "start", "end"])
         .head(1)
-        .assign(imputed=imputed)
     )
     select_segment_ids = sql.select(kg.segment.c.id.label("segment"), kg.segment.c["chromosome", "start", "end"])
     with engine.connect() as conn:
@@ -67,7 +66,7 @@ def update_kit_data(engine, kit_data):
         conn.commit()
 
 def import_matches(engine, matches):
-    """ matches fields: kit1, kit2, chromosome, start, end, length, name, email, sex"""
+    """ matches fields: kit1, kit2, chromosome, start, end, name, email, sex"""
     invalidate_cache(engine)
 
     matches = as_internal_kitid(engine, matches, ['kit1', 'kit2'])

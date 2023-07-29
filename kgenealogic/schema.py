@@ -37,8 +37,7 @@ segment = sql.Table(
     sql.Column("chromosome", sql.String, nullable=False, index=True),
     sql.Column("start", sql.Integer, nullable=False),
     sql.Column("end", sql.Integer, nullable=False),
-    sql.Column("length", sql.Float, nullable=False),
-    sql.Column("imputed", sql.Boolean, nullable=False, default=False),
+    sql.Column("length", sql.Float, index=True),
     sql.UniqueConstraint("chromosome", "start", "end", sqlite_on_conflict='IGNORE'),
 )
 
@@ -59,26 +58,6 @@ triangle = sql.Table(
     sql.Column("kit2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.Column("kit3", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.UniqueConstraint("segment", "kit1", "kit2", "kit3", sqlite_on_conflict='IGNORE'),
-)
-
-partition = sql.Table(
-    "partition",
-    metadata,
-    sql.Column("id", sql.Integer, nullable=False, primary_key=True),
-    sql.Column("chromosome", sql.String, nullable=False, index=True),
-    sql.Column("start", sql.Integer, nullable=False),
-    sql.Column("end", sql.Integer, nullable=False),
-    sql.Column("length", sql.Float),
-    sql.Column("mbp", sql.Float, sql.Computed("(end-start)/1e6")),
-    sql.UniqueConstraint("chromosome", "start", "end"),
-)
-
-segment_partition = sql.Table(
-    "segment_partition",
-    metadata,
-    sql.Column("segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
-    sql.Column("partition", sql.Integer, sql.ForeignKey("partition.id"), nullable=False, index=True),
-    sql.UniqueConstraint("segment", "partition"),
 )
 
 negative = sql.Table(

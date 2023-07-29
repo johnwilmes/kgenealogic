@@ -1,23 +1,12 @@
-import numpy as np
-import scipy as sp
 import pandas as pd
-import osqp
 import sqlalchemy as sql
+import importlib.resources as resources
 
 from kgenealogic.schema import *
+import kgenealogic as kg
 
-SOLVER_PARAMS = dict(
-    eps_abs=1e-5,
-    eps_rel=1e-5,
-    eps_prim_inf=1e-7,
-    eps_dual_inf=1e-7,
-    scaling=10,
-    polish=True,
-    max_iter=10000,
-    verbose=False,
-)
-# rounding and numerical errors mean lineqs not exactly solvable
-SOLVER_TOLERANCE = 0.2
+GENETMAP_PATH='genetmap.csv'
+GENETMAP_DTYPE={'chromosome': str, 'position': int, 'cm': float}
 
 def invalidate_cache(engine):
     stmt = (
@@ -40,135 +29,16 @@ def is_cache_valid(engine):
         result = conn.execute(stmt)
     return result.scalar_one()
 
-_CACHE_TABLES = [partition, segment_partition, negative]
+_CACHE_TABLES = [negative]
 def clear_cache(engine):
     invalidate_cache(engine)
-    delete_imputed = sql.delete(segment).where(segment.c.imputed)
-    with engine.connect() as conn:
-        conn.execute(delete_imputed)
-        conn.commit()
 
     for t in _CACHE_TABLES:
         t.drop(engine)
         t.create(engine)
 
-def build_partition(segments):
-    partition = (
-        pd.concat([
-            segments[['chromosome', 'start']].rename(columns=dict(start='end')),
-            segments[['chromosome', 'end']],
-        ])
-        .drop_duplicates()
-        .sort_values(['chromosome', 'end'])
-    )
-    partition['start'] = (
-        partition
-        .groupby('chromosome')
-        ['end']
-        .shift(1)
-    )
-    partition = partition.dropna().reset_index(drop=True)
-    partition['start'] = partition.start.astype(int)
-    partition['id'] = partition.index+1
-
-    return partition
-
 def build_cache(engine):
     clear_cache(engine)
-    # get segments
-    # build partition
-
-    select_segs = sql.select((segment.c.id-1).label("seg_id"), segment.c["chromosome", "start", "end", "length"])
-    with engine.connect() as conn:
-        all_segs = pd.read_sql(select_segs, conn)
-    cells = build_partition(all_segs)
-    
-    select_seg_part = (
-        sql.select(segment.c.id, partition.c.id)
-        .join_from(segment, partition, sql.and_(
-            segment.c.chromosome==partition.c.chromosome,
-            segment.c.start<=partition.c.start,
-            segment.c.end>=partition.c.end,
-        ))
-    )
-
-    populate_segment_partition = (
-        segment_partition.insert().from_select(["segment", "partition"], select_seg_part)
-    )
-    with engine.connect() as conn:
-        cells.to_sql("partition", conn, if_exists="append", index=False, chunksize=25000)
-        conn.execute(populate_segment_partition)
-        conn.commit()
-
-    select_seg_part_size = sql.select(
-        (segment_partition.c.segment-1).label("seg_id"),
-        (segment_partition.c.partition-1).label("part_id"),
-        partition.c.mbp,
-    ).join_from(segment_partition, partition)
-
-    chrom_size = (
-        sql.select(partition.c.chromosome, sql.func.sum(partition.c.mbp).label("mbp"))
-        .group_by(partition.c.chromosome)
-        .cte()
-    )
-    px = partition.alias()
-    py = partition.alias()
-
-    select_objective = (
-        sql.select(
-            (px.c.id-1).label("id_x"),
-            (py.c.id-1).label("id_y"),
-            sql.case(
-                (px.c.id==py.c.id, (px.c.mbp/100)*(chrom_size.c.mbp-px.c.mbp)),
-                 else_=(px.c.mbp/100)*py.c.mbp
-            ).label("value")
-        )
-        .join_from(px, py, px.c.chromosome==py.c.chromosome)
-        .join(chrom_size, px.c.chromosome==chrom_size.c.chromosome)
-    )
-
-    with engine.connect() as conn:
-        objective = pd.read_sql(select_objective, conn)
-        seg_parts = pd.read_sql(select_seg_part_size, conn)
-
-    # minimize (1/2)x^T P x + q^T x
-    # subject to l<= Ax <=u
-    # x_i: cM/(fraction of chromosome) for cell i
-    n = len(cells)
-
-    # objective: minimize basepair-length weighted variance of x within each chromosome
-    P = sp.sparse.csc_matrix((objective.value, (objective.id_x, objective.id_y)))
-    q = np.zeros(n)
-
-    # subject to matching overall cM length of known segments, x nonnegative
-    A = sp.sparse.vstack([
-        sp.sparse.csc_matrix((seg_parts.mbp, (seg_parts.seg_id, seg_parts.part_id))),
-        sp.sparse.eye(n, format='csc')
-    ], format='csc')
-
-    seg_lengths = np.zeros(all_segs.seg_id.max()+1)
-    seg_lengths[all_segs.seg_id] = all_segs.length
-
-    l = np.concatenate([seg_lengths-SOLVER_TOLERANCE, np.zeros(n)])
-    u = np.concatenate([seg_lengths+SOLVER_TOLERANCE, np.full((n,), np.Inf)])
-
-    solver = osqp.OSQP()
-    solver.setup(P=P, q=q, A=A, l=l, u=u, **SOLVER_PARAMS)
-    results = solver.solve()
-
-    cells['rate'] = results.x
-    cells['length'] = 1e-6*(cells.end-cells.start)*cells.rate
-
-    set_partition_length = (
-        partition.update()
-        .where(partition.c.id==sql.bindparam("b_id"))
-        .values(length=sql.bindparam("length"))
-    )
-    with engine.connect() as conn:
-        conn.execute(set_partition_length, cells[['id', 'length']].rename(columns=dict(id="b_id")).to_dict(orient="records"))
-        conn.commit()
-
-    label_sources = sql.update(source).values(has_negative=True)
 
     m1, m2 = match.alias(), match.alias()
     s1, s2, st = segment.alias(), segment.alias(), segment.alias()
@@ -210,26 +80,10 @@ def build_cache(engine):
     with engine.connect() as conn:
         neg_candidates = pd.read_sql(select_neg_triangles, conn)
     overlap_segments = neg_candidates[['chromosome', 'start', 'end']].drop_duplicates()
-    select_imputed_segments = (
-        sql.select(
-            sql.bindparam("chromosome"),
-            sql.bindparam("start"),
-            sql.bindparam("end"),
-            sql.func.sum(partition.c.length),
-            sql.literal(True),
-        ).where(partition.c.chromosome==sql.bindparam("chromosome"))
-        .where(partition.c.start>=sql.bindparam("start"))
-        .where(partition.c.start<=sql.bindparam("end"))
-    )
 
-    insert_imputed = (
-        segment
-        .insert()
-        .from_select(["chromosome", "start", "end", "length", "imputed"], select_imputed_segments)
-    )
     select_seg_ids = sql.select(segment.c["id", "chromosome", "start", "end"])
     with engine.connect() as conn:
-        conn.execute(insert_imputed, overlap_segments.to_dict(orient="records"))
+        conn.execute(segment.insert(), overlap_segments.to_dict(orient="records"))
         conn.commit()
         seg_ids = pd.read_sql(select_seg_ids, conn).rename(columns=dict(id="overlap_segment"))
 
@@ -264,20 +118,63 @@ def build_cache(engine):
 
     neg_segments = neg_tri[['chromosome', 'start', 'end']].drop_duplicates()
     with engine.connect() as conn:
-        conn.execute(insert_imputed, neg_segments.to_dict(orient="records"))
+        conn.execute(segment.insert(), neg_segments.to_dict(orient="records"))
         conn.commit()
         seg_ids = pd.read_sql(select_seg_ids, conn).rename(columns=dict(id="neg_segment"))
 
     neg_tri = neg_tri.merge(seg_ids, on=['chromosome', 'start', 'end'])
     neg_tri = neg_tri[['source', 'target1', 'target2', 'segment1', 'segment2', 'overlap_segment', 'neg_segment']]
+
+    label_sources = sql.update(source).values(has_negative=True)
+    with engine.connect() as conn:
+        neg_tri.to_sql("negative", conn, if_exists="append", index=False, chunksize=25000)
+        conn.execute(label_sources)
+        conn.commit()
+
+    # compute cm lengths for all segments
+    null_len_segs_query = sql.select(segment).where(segment.c.length.is_(None))
+    with engine.connect() as conn:
+        null_len_segs = pd.read_sql(null_len_segs_query, conn)
+
+    genetmap = pd.read_csv(resources.files(kg).joinpath(GENETMAP_PATH), dtype=GENETMAP_DTYPE)
+    genetmap = genetmap.sort_values("position")
+
+    seg_len_start = pd.merge_asof(
+        null_len_segs.sort_values("start"),
+        genetmap,
+        left_on="start",
+        right_on="position",
+        by="chromosome",
+        direction="nearest"
+    ).set_index("id").cm
+
+    seg_len_end = pd.merge_asof(
+        null_len_segs.sort_values("end"),
+        genetmap,
+        left_on="end",
+        right_on="position",
+        by="chromosome",
+        direction="nearest"
+    ).set_index("id").cm
+
+    null_len_segs['length'] = null_len_segs.id.map(seg_len_end-seg_len_start)
+    null_len_segs = null_len_segs[['id', 'length']].rename(columns=dict(id="b_id"))
+
+    seg_len_update = (
+        segment.update()
+        .where(segment.c.id==sql.bindparam("b_id"))
+        .values(length=sql.bindparam("length"))
+    )
+    with engine.connect() as conn:
+        conn.execute(seg_len_update, null_len_segs.to_dict(orient="records"))
+        conn.commit()
+
+    # all done, set cache as valid
     validate_cache = (
         sql.update(kgenealogic)
         .where(kgenealogic.c.key=='cache_valid')
         .values(value='Y')
     )
-
     with engine.connect() as conn:
-        neg_tri.to_sql("negative", conn, if_exists="append", index=False, chunksize=25000)
-        conn.execute(label_sources)
         conn.execute(validate_cache)
         conn.commit()
