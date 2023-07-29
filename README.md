@@ -7,7 +7,6 @@ tree based on shared and unshared DNA.
 
 - Supports GEDmatch pairwise segment and triangulation files
 - Uses both presence and inferred absence of triangulation
-- Infers crossover probabilities on derived segments
 - Allows, but doesn't require, specifying known relatives at each level of the family tree
 
 ## Usage
@@ -57,15 +56,4 @@ weight between T1 and T2 in the graph used for clustering.
 
 We find all negative triangulations for kits S whose triangulations and pairwise matches are
 available. This is somewhat computationally expensive, because the segments where negative
-triangulations occur are generally sub-segments of those appearing in the data files. It also means
-we need a method of inferring crossover probabilities so we can assign accurate cM lengths to these
-segments.
-
-### Inferred crossover probabilities
-
-It's not clear to me what model of crossover probability GEDmatch uses, and at some point we might
-want to allow using other data sources with different models. So we infer an approximation of the
-crossover probabilities used to generate the imported data files. This is done by finding the
-coarsest partition of each chromosome that refines all listed segments, and solving a quadratic
-program to reproduce the cM lengths given in the imported data from lengths for the partition
-cells.
+triangulations occur are generally sub-segments of those appearing in the data files.
