@@ -18,14 +18,14 @@ kgenealogic build [-p <project-file>] ... # build crossover probability model an
 kgenealogic cluster [-p <project-file>] [-o <out-file>] <config-file>
 
 kgenealogic --help # general help
-kgenealogic --help <command> # help for <command>, e.g. init/add/build/cluster
+kgenealogic <command> --help # help for <command>, e.g. init/add/build/cluster
 ```
 
 ## Algorithms
 
 ### Clustering
 
-Clustering is performed by recursive spectral approximation of a min-cut of a genetic closeness
+Clustering is performed by recursive greedy approximation of a min-cut of a genetic closeness
 graph.
 
 Specifically, the sums of the (cM) lengths of pairwise matches form the edge-weights of a base
@@ -38,8 +38,7 @@ structure).
 Having formed this graph at a particular node of the tree, we consider seeds listed in the
 clustering configuration in the maternal or paternal branches of the node. For each connected
 component of the graph, if there is at least one seed present in the component, we find an
-approximate minimum cut separating the maternal and paternal seeds. Specifically, we use the
-minimum cut compatible with the vertex ordering of the non-seeds given by the principal eigenvalue.
+approximate minimum cut separating the maternal and paternal seeds using a greedy algorithm. 
 If there are only, e.g., maternal seeds present and no negative weights (from imputed negative
 triangulations), then the entire component will be classified as maternal.
 

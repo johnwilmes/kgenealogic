@@ -114,28 +114,6 @@ def build(
     kgenealogic.build_cache(engine)
 
 @app.command()
-def build(
-    project: PROJECT_OPTION = DEFAULT_PROJECT,
-    force:  Annotated[bool, typer.Option(help="Force re-build, even if already built")] = False
-):
-    """
-    Process all added data files in preparation for clustering.
-
-    - Uses all segments with provided lengths in order to build a model of crossover probability, to
-    impute cM lengths of derived segments
-
-    - Finds all "negative" triangles, where two target kits have overlapping matching segments on a
-    common source kit, but the segment does not appear as a triangulation for the three kits
-    """
-    engine = sql.create_engine(f"sqlite:///{project}")
-    if not force:
-        if kgenealogic.is_cache_valid(engine):
-            typer.echo("Project is already built. Use --force to re-build", err=True)
-            raise typer.Abort()
-
-    kgenealogic.build_cache(engine)
-
-@app.command()
 def cluster(
     config: Annotated[Path, typer.Argument(
         file_okay=True,
@@ -161,9 +139,24 @@ def cluster(
     A config file in (strict) YAML format must be provided. An example of such a file is
     distributed with this package. The valid keys for this config file are:
 
+    - include: Kit numbers to be included are specified as a list. Each list entry can be either
+      (1) just the kit number to be included, as a string, or (2) a mapping indicating a kit number
+      and some of its matches to be included. In the second format, the valid keys are
+
+      -- id: the (base) kit number as a string (required)
+      -- matches (optional, floating point): if this is given, it is interpreted as the minimum
+      length in cM of a match so that if kit2 matches the base kit anywhere with this length, then
+      kit2 will also be included
+      -- triangles (optional, floating point): if this is given, it is interpreted as the minimum
+      length in cM of a triangle so that if kit2 participates in a triangle the base kit anywhere
+      with this length, with any third kit, then kit2 will also be included.
+
+      Seeds are automatically included.
+
     - exclude: Kit numbers to be excluded are specified as a list. E.g., known duplicate kits can
       be specified here, or individuals that are known to not respect the desired tree structure.
-      Optional, defaults to an empty list.
+      Optional, defaults to an empty list. Anything listed (directly or by reference) in the
+      "include" list and also in the "exclude" list will be excluded.
 
     - min_length: Minimum segment length to be considered, in cM. Optional, defaults to 7cM
 
@@ -226,10 +219,17 @@ def cluster(
 
     This will produce an output file separating my maternal and paternal relatives, with the
     paternal relatives further split into paternal grandfather and paternal grandmother relatives.
-    The output file will be a CSV file with two columns: kit, specifying the kit number, and label,
-    a string consisting of Ms and Ps. The label MMPM means a relative of the root's mother's
-    mother's father's mother. Labels may be shorter than the desired tree depth - or even empty
-    strings - if there is not enough information to place them deeper in the tree.
+    The output file will be a CSV file with several columns:
+    - kit, specifying the kit number
+    - ahnentafel, the ahnentafel number of the most distant relative of the root to which the kit
+      is determiend to be related
+    - label<n>, where n varies from 0 to depth of the tree minus 1. This is 'M' if the kit is put
+      on the maternal side at that depth, and P if it is put on the paternal side. The list of
+      these labels is equivalent to the value in the ahnentafel field
+    - confidence<n>, a number between 0 and 1 indicating a rough confidence with which the kit is
+      given label<n>. These numbers should not be interpreted as probabilities. A value of 1
+      indicates that all of the kit's matches have labels consistent with the kit's label at this
+      depth.
     """
 
     engine = sql.create_engine(f"sqlite:///{project}")

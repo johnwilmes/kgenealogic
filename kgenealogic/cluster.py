@@ -19,6 +19,7 @@ class Seed:
 @dataclass
 class SeedTree:
     """Data structure for organizing cluster seeds in tree"""
+    ahnentafel: int
     values: list[Seed] = field(default_factory=list)
     branches: dict[str, typing.Any] = field(default_factory=dict)
 
@@ -29,37 +30,9 @@ def flatten(tree, values):
     return values
 
 def cluster_data(engine, config):
-    kits_query = sql.select(kit.c['id', 'kitid'])
-    graph_query = (
-        sql.select(
-            match.c.kit1,
-            match.c.kit2,
-            sql.func.sum(segment.c.length).label("weight"),
-        )
-        .join_from(match, segment, match.c.segment==segment.c.id)
-        .where(segment.c.length >= config.min_length)
-        .where(match.c.kit1 != match.c.kit2)
-        .group_by(match.c.kit1, match.c.kit2)
-    )
-    trisource_query = (
-        sql.select(source.c.kit)
-        .where(source.c.has_triangles)
-        .where(source.c.has_negative)
-    )
-    autox_query = (
-        sql.select(sql.distinct(match.c.kit2).label('kit'))
-        .join_from(match, segment, match.c.segment==segment.c.id)
-        .where(segment.c.chromosome=='X')
-        .where(segment.c.length >= config.min_length)
-        .where(match.c.kit1==sql.bindparam('seed'))
-   )
-
     with engine.connect() as conn:
-        kits = pd.read_sql(kits_query, conn).set_index('kitid').id
-        trisource= set(int(x) for x in pd.read_sql(trisource_query, conn).kit)
-        graph = pd.read_sql(graph_query, conn)
-
-    graph['weight'] = PAIRWISE_FACTOR*graph['weight'].astype(float)
+        kits = pd.read_sql(sql.select(kit.c['id', 'kitid']), conn)
+    kits = kits.set_index('kitid').id
 
     seeds = set()
     exclude = set()
@@ -71,10 +44,92 @@ def cluster_data(engine, config):
             else:
                 kit_set.add(int(kits.loc[kitid]))
 
+    if config.include:
+        include = set()
+        match_include_query = (
+            sql.select(sql.distinct(match.c.kit2).label("kit"))
+            .join_from(match, segment)
+            .where(match.c.kit1==sql.bindparam("kit"))
+            .where(segment.c.length > sql.bindparam("length"))
+        )
+        tri_include_query = (
+            sql.select(sql.distinct(triangle.c.kit2).label("kit"))
+            .join_from(triangle, segment)
+            .where(triangle.c.kit1==sql.bindparam("kit"))
+            .where(segment.c.length > sql.bindparam("length"))
+        )
+        with engine.connect() as conn:
+            for k in config.include:
+                kitid = k['id']
+                if kitid not in kits.index:
+                    typer.echo(f"Invliad kit id {kitid}", err=True)
+                    raise typer.Exit(code=1)
+                else:
+                    include.add(int(kits.loc[kitid]))
+                kitloc = int(kits.loc[kitid])
+                if k.get('matches', None) is not None:
+                    query_params = dict(kit=kitloc, length=k['matches'])
+                    k_nbr = pd.read_sql(match_include_query, conn, params=query_params)
+                    include.update([int(x) for x in k_nbr.kit])
+                if k.get('triangles', None) is not None:
+                    query_params = dict(kit=kitloc, length=k['triangles'])
+                    k_nbr = pd.read_sql(tri_include_query, conn, params=query_params)
+                    include.update([int(x) for x in k_nbr.kit])
+        kits = kits[kits.isin(include|seeds)]
+
     kits = kits[~kits.index.isin(exclude)]
 
-    def build_seed_tree(raw):
-        parsed = SeedTree()
+    graph_query = (
+        sql.select(
+            match.c.kit1,
+            match.c.kit2,
+            sql.func.sum(segment.c.length).label("weight"),
+        )
+        .join_from(match, segment, match.c.segment==segment.c.id)
+        .where(segment.c.length >= config.min_length)
+        .where(match.c.kit1 != match.c.kit2)
+        .group_by(match.c['kit1', 'kit2'])
+    )
+    triangle_query = (
+        sql.select(
+            triangle.c.kit1,
+            triangle.c.kit2,
+            sql.func.sum(segment.c.length).label("weight"),
+        )
+        .join_from(triangle, segment, triangle.c.segment==segment.c.id)
+        .where(segment.c.length >= config.min_length)
+        .where(triangle.c.kit1 != triangle.c.kit2)
+        .where(triangle.c.kit3.not_in(config.exclude))
+        .group_by(triangle.c['kit1', 'kit2'])
+    )
+    trisource_query = (
+        sql.select(source.c.kit)
+        .where(source.c.has_triangles)
+        .where(source.c.has_negative)
+    )
+
+    with engine.connect() as conn:
+        graph = pd.read_sql(graph_query, conn)
+        tri_graph = pd.read_sql(triangle_query, conn)
+        trisource= set(int(x) for x in pd.read_sql(trisource_query, conn).kit)
+
+    graph['weight'] = PAIRWISE_FACTOR*graph['weight'].astype(float)
+    graph = (
+        graph
+        .set_index(['kit1', 'kit2'])
+        .add(tri_graph.set_index(['kit1', 'kit2']), fill_value=0)
+        .reset_index()
+    )
+
+    autox_query = (
+        sql.select(sql.distinct(match.c.kit2).label('kit'))
+        .join_from(match, segment, match.c.segment==segment.c.id)
+        .where(segment.c.chromosome=='X')
+        .where(segment.c.length >= config.min_length)
+        .where(match.c.kit1==sql.bindparam('seed'))
+    )
+    def build_seed_tree(raw, ahnentafel):
+        parsed = SeedTree(ahnentafel=ahnentafel)
         autox = set()
         for k in raw.get('kits', []):
             kitlocal = int(kits.loc[k['id']])
@@ -91,16 +146,18 @@ def cluster_data(engine, config):
                 autox.update(k_autox)
             parsed.values.append(Seed(kit=kitlocal, floating=floating))
 
-        for short, long in (('M', 'maternal'), ('P', 'paternal')):
+        for a, short, long in ((1, 'M', 'maternal'), (0, 'P', 'paternal')):
             if long in raw:
-                parsed.branches[short] = build_seed_tree(raw[long])
+                parsed.branches[short] = build_seed_tree(raw[long],a+(2*ahnentafel))
 
         if autox:
-            maternal_values = parsed.branches.setdefault('M', SeedTree(values=[])).values
+            if 'M' not in parsed.branches:
+                parsed.branches['M'] = SeedTree(values=[],ahnentafel=1+(2*ahnentafel))
+            maternal_values = parsed.branches['M'].values
             for x in autox:
                 maternal_values.append(Seed(kit=x, floating=True))
         return parsed
-    tree = build_seed_tree(config.tree)
+    tree = build_seed_tree(config.tree, 1)
 
     source_tri = lambda source: get_triangles(engine, source, config.min_length)
     clusters = recursive_cluster(kits, tree, graph, source_tri)
@@ -108,83 +165,87 @@ def cluster_data(engine, config):
     kitids = kits.reset_index().set_index('id').kitid
     clusters['kit'] = clusters.kit.map(kitids)
 
+    fixed_cols = ['kit', 'ahnentafel']
+    clusters = clusters[fixed_cols + [c for c in clusters.columns if c not in fixed_cols]]
+
     return clusters
 
 def get_triangles(engine, source, min_length):
-    pos_tri = (
-        sql.select(
-            triangle.c.kit1,
-            triangle.c.kit2,
-            segment.c.length,
-        )
-        .join_from(triangle, segment, triangle.c.segment==segment.c.id)
-        .where(triangle.c.kit3==source)
-        .where(segment.c.length >= min_length)
-        .where(triangle.c.kit1!=triangle.c.kit2)
-    )
     neg_tri = (
         sql.select(
-            negative.c.target1.label("kit1"),
-            negative.c.target2.label("kit2"),
-            (-segment.c.length).label("length"),
+            overlap.c.target1.label("kit1"),
+            overlap.c.target2.label("kit2"),
+            sql.func.sum(-segment.c.length).label("weight"),
         )
-        .join_from(negative, segment, negative.c.neg_segment==segment.c.id)
-        .where(negative.c.source==source)
+        .join_from(negative, overlap)
+        .join(segment, negative.c.neg_segment==segment.c.id)
+        .where(overlap.c.source==source)
         .where(segment.c.length >= min_length)
-        .where(negative.c.target1!=negative.c.target2)
+        .group_by(overlap.c['target1', 'target2'])
     )
-    all_tri = sql.union_all(pos_tri, neg_tri).cte()
 
-    sum_tri = (
-        sql.select(
-            all_tri.c.kit1,
-            all_tri.c.kit2,
-            sql.func.sum(all_tri.c.length).label("weight"),
-        )
-        .group_by(all_tri.c.kit1, all_tri.c.kit2)
-    )
     with engine.connect() as conn:
-        result = pd.read_sql(sum_tri, conn)
+        result = pd.read_sql(neg_tri, conn)
     return result
 
 def recursive_cluster(kits, tree, graph, source_tri):
     # graph format: kit1/kit2/weight
     # initial value: all pairwise matches, suitably weighted relative to triangles that will be added?
     nonfloat = []
+    tri_graph = graph
     for source in tree.values:
         if not source.floating:
-            graph = graph.set_index(['kit1', 'kit2']).add(
+            tri_graph = tri_graph.set_index(['kit1', 'kit2']).add(
                 source_tri(source.kit).set_index(['kit1', 'kit2']), fill_value=0
             ).reset_index()
             nonfloat.append(source.kit)
         
+    depth = int(np.log2(tree.ahnentafel))
+    result = pd.DataFrame(dict(kit=kits))
+
     kits = kits[~kits.isin(nonfloat)]
     graph = graph[graph.kit1.isin(kits)&graph.kit2.isin(kits)]
-    
-    if tree.branches:
+    tri_graph = tri_graph[tri_graph.kit1.isin(kits)&tri_graph.kit2.isin(kits)]
+    if tree.branches and (len(result)>0) and (len(tri_graph) > 0):
         flat_seeds = []
-        for label, branch in tree.branches.items():
-            branch_seeds = flatten(branch, [])
+        for label, tree_branch in tree.branches.items():
+            branch_seeds = flatten(tree_branch, [])
             branch_seeds = pd.DataFrame(dict(kit=branch_seeds))
             branch_seeds['label'] = label
             flat_seeds.append(branch_seeds)
         flat_seeds = pd.concat(flat_seeds, ignore_index=True)
-        clusters = get_clusters(graph, flat_seeds)
 
-        for label in tree.branches:
-            branch = clusters[clusters.label==label]
-            if len(branch) > 0:
-                branch = recursive_cluster(branch.kit, tree.branches[label], graph, source_tri)
-                branch_labels = label + clusters.kit.map(branch.set_index('kit').label)
-                clusters.label.where(branch_labels.isnull(), branch_labels, inplace=True)
+        clusters = get_clusters(tri_graph, flat_seeds).set_index('kit')
+        result['label'] = (
+            result.kit.map(clusters.label)
+            .fillna('')
+            .astype(str)
+        )
+        #result.label.mask(result.kit.isin(flat_seeds.kit), flat_seeds.label, inplace=True)
+        result['confidence'] = result.kit.map(clusters.confidence)
+        result['ahnentafel'] = np.select(
+            [result.label=='P', result.label=='M'],
+            [2*tree.ahnentafel, 1+(2*tree.ahnentafel)], tree.ahnentafel
+        )
+
+        result_branches = []
+        for label, kit_branch in result.groupby('label'):
+            if label in tree.branches:
+                tree_branch = tree.branches[label]
+                branch = recursive_cluster(kit_branch.kit, tree_branch, graph, source_tri)
+                branch[f"label{depth}"] = branch.kit.map(kit_branch.set_index('kit').label)
+                branch[f"confidence{depth}"] = branch.kit.map(kit_branch.set_index('kit').confidence)
+            else:
+                branch = kit_branch.rename(columns=dict(
+                    label=f"label{depth}",
+                    confidence=f"confidence{depth}",
+                ))
+            result_branches.append(branch)
+        result = pd.concat(result_branches, ignore_index=True)
     else:
-        clusters = pd.DataFrame(dict(kit=kits))
-        clusters['label'] = ''
+        result['ahnentafel'] = tree.ahnentafel
 
-    nonfloat = pd.DataFrame(dict(kit=nonfloat))
-    nonfloat['label'] = ''
-
-    return pd.concat([clusters, nonfloat], ignore_index=True)
+    return result
 
 def get_adjacency(edges, weights):
     vertex_to_id = (
@@ -199,58 +260,46 @@ def get_adjacency(edges, weights):
     graph = sp.sparse.coo_array((weights, (edges[0].map(id_to_vertex), edges[1].map(id_to_vertex))), shape=(n,n)).toarray()
     return graph, vertex_to_id
 
-def get_clusters(graph, seeds):
-    clusters = (
+def get_clusters(graph, seeds, max_rounds=None, fix_seeds=True):
+    graph = graph.copy()
+    labels = (
         graph
         .assign(weight=graph.weight.abs())
         .groupby('kit1')
         .weight
         .sum()
+        .fillna(0)
         .reset_index()
         .rename(columns=dict(kit1='kit'))
     )
-    clusters['label'] = clusters.kit.map(seeds.set_index('kit').label).fillna('')
-
-    adjacency, vertex_to_kit = get_adjacency((graph.kit1, graph.kit2), graph.weight)
-    n_components, components = sp.sparse.csgraph.connected_components(adjacency!=0, directed=False)
-    for c_idx in range(n_components):
-        c = (components==c_idx)
-        c_kits = vertex_to_kit[c].reset_index(drop=True)
-        c_clusters = clusters.kit.isin(c_kits)
-        c_adj = adjacency[c,:][:,c]
-
-        m_seeds = c_kits.isin(seeds.query("label=='M'").kit)
-        p_seeds = c_kits.isin(seeds.query("label=='P'").kit)
-        n_m_seeds = m_seeds.sum()
-        n_p_seeds = p_seeds.sum()
-        
-        n = len(c_adj)
-        # order vertices according to principal eigenvalue
-        _, eig = sp.linalg.eigh(c_adj, subset_by_index=(n-1, n-1))
-        eig = eig[:,0].copy()
-        
-        opt = float('inf')
-        for eig0 in (eig, -eig):
-            eig0[m_seeds] = float('-inf')
-            eig0[p_seeds] = float('inf')
-            
-            vert_order = eig0.argsort()
-            # compute size of cut (sum of crossing weights) for each cut of form vert_order[:i]
-            triu = np.triu(c_adj[vert_order, :][:, vert_order])
-            cut_size = np.zeros((n+1,))
-            cut_size[1:] = triu.sum(axis=1).cumsum()-triu.sum(axis=0).cumsum()
-            if n_m_seeds > 0:
-                cut_size[:n_m_seeds] = float('inf')
-            if n_p_seeds > 0:
-                cut_size[-n_p_seeds:] = float('inf')
-            val = cut_size.min()
-            if val < opt:
-                opt = val
-                n_M = cut_size.argmin()
-                M = vert_order[:n_M]
-                P = vert_order[n_M:]
-            
-        clusters['label'].mask(clusters.kit.isin(c_kits[M]), 'M', inplace=True)
-        clusters['label'].mask(clusters.kit.isin(c_kits[P]), 'P', inplace=True)
+    labels['label'] = labels.kit.map(seeds.set_index('kit').label)
+    labels = labels[labels.weight>0].set_index('kit').sort_index()
     
-    return clusters[['kit', 'label']]
+    max_rounds = max_rounds or 2*len(labels)
+    i=0
+    while True:
+        graph['label'] = graph.kit2.map(labels.label)
+        
+        # TODO would be nice if seg_sum took confidence-weighted sum, but this is circular. does it converge?
+        seg_sum = graph.groupby(['kit1', 'label']).weight.sum().unstack(level=-1).fillna(0)
+        labels['paternal'] = seg_sum.P-seg_sum.M
+        labels['confidence'] = labels['paternal'].abs()/labels['weight']
+        available = np.any([
+            labels.label.isnull(),
+            (labels.label=='P')&(labels.paternal<0),
+            (labels.label=='M')&(labels.paternal>0),
+        ], axis=0)
+        available = available & (labels.confidence > 0)
+        if fix_seeds:
+            available = available & (~labels.index.isin(seeds.kit))
+        i+=1
+        
+        if (not np.any(available)) or (i > max_rounds):
+            break
+
+        next_kit = labels[available].iloc[labels.confidence[available].argmax()]
+        next_label = 'P' if next_kit.paternal>0 else 'M'
+        labels.loc[next_kit.name, 'label'] = next_label
+
+    labels['label'] = labels.label.fillna('').astype(str)
+    return labels.reset_index()[['kit', 'label', 'confidence']]

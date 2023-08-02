@@ -38,6 +38,7 @@ segment = sql.Table(
     sql.Column("start", sql.Integer, nullable=False),
     sql.Column("end", sql.Integer, nullable=False),
     sql.Column("length", sql.Float, index=True),
+    sql.Column("generated", sql.Boolean, nullable=False),
     sql.UniqueConstraint("chromosome", "start", "end", sqlite_on_conflict='IGNORE'),
 )
 
@@ -60,17 +61,23 @@ triangle = sql.Table(
     sql.UniqueConstraint("segment", "kit1", "kit2", "kit3", sqlite_on_conflict='IGNORE'),
 )
 
-negative = sql.Table(
-    "negative",
+overlap = sql.Table(
+    "overlap",
     metadata,
+    sql.Column("id", sql.Integer, nullable=False, primary_key=True),
     sql.Column("source", sql.Integer, sql.ForeignKey("source.kit"), nullable=False, index=True),
     sql.Column("target1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.Column("target2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
-    sql.Column("segment1", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
-    sql.Column("segment2", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
-    sql.Column("overlap_segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
+    sql.Column("segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
+    sql.UniqueConstraint("source", "target1", "target2", "segment", sqlite_on_conflict='IGNORE'),
+)
+
+negative = sql.Table(
+    "negative",
+    metadata,
+    sql.Column("overlap", sql.Integer, sql.ForeignKey("overlap.id"), nullable=False, index=True),
     sql.Column("neg_segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
-    sql.UniqueConstraint("source", "target1", "target2", "neg_segment", sqlite_on_conflict='IGNORE'),
+    sql.UniqueConstraint("overlap", "neg_segment", sqlite_on_conflict='IGNORE'),
 )
 
 def initialize(engine):

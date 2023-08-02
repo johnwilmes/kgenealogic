@@ -3,7 +3,6 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 import pandas as pd
 
 import kgenealogic.schema as kg
-from kgenealogic.cache import invalidate_cache
 
 def add_sources(engine, sources, has_segments=None, has_triangles=None):
     traits = {}
@@ -35,11 +34,12 @@ def as_internal_kitid(engine, data, kitid_fields):
         data = data.assign(**{c: data[c].map(kit_ids)})
     return data
 
-def as_internal_segment(engine, data):
+def as_internal_segment(engine, data, generated=False):
     segments = (
         data[["chromosome", "start", "end"]]
         .groupby(["chromosome", "start", "end"])
         .head(1)
+        .assign(generated=generated)
     )
     select_segment_ids = sql.select(kg.segment.c.id.label("segment"), kg.segment.c["chromosome", "start", "end"])
     with engine.connect() as conn:
@@ -67,6 +67,7 @@ def update_kit_data(engine, kit_data):
 
 def import_matches(engine, matches):
     """ matches fields: kit1, kit2, chromosome, start, end, name, email, sex"""
+    from kgenealogic.cache import invalidate_cache
     invalidate_cache(engine)
 
     matches = as_internal_kitid(engine, matches, ['kit1', 'kit2'])
@@ -94,6 +95,7 @@ def import_matches(engine, matches):
 
 
 def import_triangles(engine, triangles):
+    from kgenealogic.cache import invalidate_cache
     invalidate_cache(engine)
 
     triangles = as_internal_kitid(engine, triangles, ['kit1', 'kit2', 'kit3'])

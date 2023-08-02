@@ -63,12 +63,18 @@ CLUSTER_KIT_SCHEMA = yaml.Str() | yaml.Map({
     yaml.Optional('autox', default=False): yaml.Bool(),
     yaml.Optional('float', default=None, drop_if_none=False): yaml.EmptyNone() | yaml.Bool(),
 })
+CLUSTER_INCLUDE_SCHEMA = yaml.Str() | yaml.Map({
+    'id': yaml.Str(),
+    yaml.Optional('matches', default=None): yaml.EmptyNone() | yaml.Float(),
+    yaml.Optional('triangles', default=None): yaml.EmptyNone() | yaml.Float(),
+})
 CLUSTER_TREE_SCHEMA = yaml.Map({
     yaml.Optional('kits'): yaml.EmptyList() | yaml.Seq(CLUSTER_KIT_SCHEMA),
     yaml.Optional('maternal'): yaml.Any(),
     yaml.Optional('paternal'): yaml.Any(),
 })
 CLUSTER_CONFIG_SCHEMA = yaml.Map({
+    yaml.Optional('include'): yaml.EmptyList() | yaml.Seq(CLUSTER_INCLUDE_SCHEMA),
     yaml.Optional('exclude'): yaml.EmptyList() | yaml.UniqueSeq(yaml.Str()),
     yaml.Optional('min_length'): yaml.Float(),
     'tree': CLUSTER_TREE_SCHEMA,
@@ -77,6 +83,7 @@ CLUSTER_CONFIG_SCHEMA = yaml.Map({
 @dataclass
 class ClusterConfig:
     """Data structure for storing parsed cluster configuration"""
+    include: list[dict[str, typing.Any]]
     exclude: list[str]
     min_length: float
     tree: dict[str, typing.Any]
@@ -105,6 +112,13 @@ def read_cluster_config(path):
     validate_config_tree(parsed['tree'], seeds)
     exclude = parsed.data.get('exclude', [])
 
+    include = []
+    for k in parsed.data.get('include', []):
+        if type(k)==str:
+            include.append(dict(id=k, matches=None, triangles=None))
+        else:
+            include.append(k)
+
     unique_seeds = set()
     for s in seeds:
         if s['id'] in unique_seeds:
@@ -119,6 +133,7 @@ def read_cluster_config(path):
         raise typer.Exit(code=1)
 
     result =  ClusterConfig(
+        include=include,
         exclude=exclude,
         min_length=parsed.data.get('min_length', 7.),
         tree=parsed['tree'].data,
