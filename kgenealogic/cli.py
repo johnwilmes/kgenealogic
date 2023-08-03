@@ -179,15 +179,16 @@ def cluster(
       maternal (optional, boolean). If the kit corresponds to a male child of the parents
       represented by the paternal and maternal branches of this node of the tree, it makes sense to
       use a value of true. Otherwise omit the key or set it to false (the default)
+      -- negative: whether to use negative triangulations for this node, if available (option,
+      boolean, default false)
       -- float: whether to keep the kit at this node of the tree, or attempt to float it into the
       branches (optional, boolean). If float is false, this seed will be kept at this node of the
       tree - this is desired when the kit is known to be a descendant of the parents represented by
       the maternal and paternal branches at this node. If float is true, this seed will be pushed
       out as far as possible into the branches - this is desired when the kit's relation to the
       root is partially but not completely known (e.g., the kit is some relative of the maternal
-      grandfather, but nothing more is known). Trianglulations for which the kit is the source are
-      NOT used if float is set to true. If float is not set, the default behavior is to treat it as
-      false if triangulations are available, and otherwise treat it as true.
+      grandfather, but nothing more is known). If float is not set, the default behavior is to
+      treat it as false if triangulations are available, and otherwise treat it as true.
 
     For example:
 
@@ -201,6 +202,7 @@ def cluster(
           id: T000003
           autox: true
           float: false
+          negative: true
         - # my sister's son
           id: T000004
           float: false

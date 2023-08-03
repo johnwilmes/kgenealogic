@@ -15,6 +15,7 @@ PAIRWISE_FACTOR = 0.25
 class Seed:
     kit: int
     floating: bool = field(default_factory=bool)
+    negative: bool = field(default_factory=bool)
 
 @dataclass
 class SeedTree:
@@ -144,7 +145,7 @@ def cluster_data(engine, config):
                 k_autox.difference_update(seeds)
                 seeds.update(k_autox)
                 autox.update(k_autox)
-            parsed.values.append(Seed(kit=kitlocal, floating=floating))
+            parsed.values.append(Seed(kit=kitlocal, floating=floating, negative=k['negative']))
 
         for a, short, long in ((1, 'M', 'maternal'), (0, 'P', 'paternal')):
             if long in raw:
@@ -194,10 +195,11 @@ def recursive_cluster(kits, tree, graph, source_tri):
     nonfloat = []
     tri_graph = graph
     for source in tree.values:
-        if not source.floating:
+        if source.negative:
             tri_graph = tri_graph.set_index(['kit1', 'kit2']).add(
                 source_tri(source.kit).set_index(['kit1', 'kit2']), fill_value=0
             ).reset_index()
+        if not source.floating:
             nonfloat.append(source.kit)
         
     depth = int(np.log2(tree.ahnentafel))

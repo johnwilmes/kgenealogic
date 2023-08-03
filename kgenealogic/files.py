@@ -62,11 +62,12 @@ CLUSTER_KIT_SCHEMA = yaml.Str() | yaml.Map({
     'id': yaml.Str(),
     yaml.Optional('autox', default=False): yaml.Bool(),
     yaml.Optional('float', default=None, drop_if_none=False): yaml.EmptyNone() | yaml.Bool(),
+    yaml.Optional('negative', default=None, drop_if_none=False): yaml.EmptyNone() | yaml.Bool(),
 })
 CLUSTER_INCLUDE_SCHEMA = yaml.Str() | yaml.Map({
     'id': yaml.Str(),
-    yaml.Optional('matches', default=None): yaml.EmptyNone() | yaml.Float(),
-    yaml.Optional('triangles', default=None): yaml.EmptyNone() | yaml.Float(),
+    yaml.Optional('matches', default=None, drop_if_none=False): yaml.EmptyNone() | yaml.Float(),
+    yaml.Optional('triangles', default=None, drop_if_none=False): yaml.EmptyNone() | yaml.Float(),
 })
 CLUSTER_TREE_SCHEMA = yaml.Map({
     yaml.Optional('kits'): yaml.EmptyList() | yaml.Seq(CLUSTER_KIT_SCHEMA),
@@ -93,7 +94,7 @@ def validate_config_tree(config, seeds):
     expanded_kits = []
     for k in config.data.get('kits', []):
         if type(k)==str:
-            expanded_kits.append(dict(id=k, autox=False, float=None))
+            expanded_kits.append(dict(id=k, autox=False, float=None, negative=False))
         else:
             expanded_kits.append(k)
     config['kits']=expanded_kits
