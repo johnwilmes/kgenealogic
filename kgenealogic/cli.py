@@ -9,7 +9,7 @@ import sys
 import sqlalchemy as sql
 import typer
 
-import kgenealogic
+import kgenealogic as kg
 import kgenealogic.files as kg_files
 
 import warnings
@@ -51,7 +51,7 @@ def init(
         raise typer.Abort()
 
     engine = sql.create_engine(f"sqlite:///{project}")
-    kgenealogic.initialize(engine)
+    kg.initialize(engine)
 
 @app.command()
 def add(
@@ -80,14 +80,14 @@ def add(
     for path in files:
         if kg_files.is_ged_matches(path):
             data = kg_files.read_ged_matches(path)
-            kgenealogic.import_matches(engine, data)
+            kg.import_matches(engine, data)
         elif kg_files.is_ged_triangles(path):
             if not source:
                 typer.echo("Source kit number required for GEDmatch triangulation files, aborting.",
                       err=True)
                 raise typer.Exit(code=1)
             data = kg_files.read_ged_triangles(path, source)
-            kgenealogic.import_triangles(engine, data)
+            kg.import_triangles(engine, data)
         else:
             typer.echo(f"Unrecognized file type: {path}", err=True)
 
@@ -107,11 +107,11 @@ def build(
     """
     engine = sql.create_engine(f"sqlite:///{project}")
     if not force:
-        if kgenealogic.is_cache_valid(engine):
+        if kg.is_cache_valid(engine):
             typer.echo("Project is already built. Use --force to re-build", err=True)
             raise typer.Abort()
 
-    kgenealogic.build_cache(engine)
+    kg.build_cache(engine)
 
 @app.command()
 def cluster(
@@ -235,10 +235,10 @@ def cluster(
     """
 
     engine = sql.create_engine(f"sqlite:///{project}")
-    if not kgenealogic.is_cache_valid(engine):
+    if not kg.is_cache_valid(engine):
         typer.echo("Project is not yet built. First run kgenealogic build", err=True)
         raise typer.Abort()
     config = kg_files.read_cluster_config(config)
-    clusters = kgenealogic.cluster_data(engine, config)
+    clusters = kg.cluster_data(engine, config)
     kg_files.write_clusters(clusters, outfile)
 

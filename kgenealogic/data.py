@@ -67,7 +67,7 @@ def update_kit_data(engine, kit_data):
 
 def import_matches(engine, matches):
     """ matches fields: kit1, kit2, chromosome, start, end, name, email, sex"""
-    from kgenealogic.cache import invalidate_cache
+    from .cache import invalidate_cache
     invalidate_cache(engine)
 
     matches = as_internal_kitid(engine, matches, ['kit1', 'kit2'])
@@ -95,7 +95,7 @@ def import_matches(engine, matches):
 
 
 def import_triangles(engine, triangles):
-    from kgenealogic.cache import invalidate_cache
+    from .cache import invalidate_cache
     invalidate_cache(engine)
 
     triangles = as_internal_kitid(engine, triangles, ['kit1', 'kit2', 'kit3'])

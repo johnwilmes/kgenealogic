@@ -9,13 +9,23 @@ tree based on shared and unshared DNA.
 - Uses both presence and inferred absence of triangulation
 - Allows, but doesn't require, specifying known relatives at each level of the family tree
 
+## Installation
+
+It is highly recommended to use a virtual environment for installing kgenealogic and its
+dependencies (e.g., conda, venv, etc.). Within the virtual environment, just run:
+
+```
+pip install kgenealogic
+```
+
+
 ## Usage
 
 ```
-kgenealogic init [-p <project-file>]
-kgenealogic add [-p <project-file>] ... # files to import
-kgenealogic build [-p <project-file>] ... # build crossover probability model and find negative triangulations
-kgenealogic cluster [-p <project-file>] [-o <out-file>] <config-file>
+python3 -m kgenealogic init [-p <project-file>]
+python3 -m kgenealogic add [-p <project-file>] ... # files to import
+python3 -m kgenealogic build [-p <project-file>] ... # build crossover probability model and find negative triangulations
+python3 -m kgenealogic cluster [-p <project-file>] [-o <out-file>] <config-file>
 
 kgenealogic --help # general help
 kgenealogic <command> --help # help for <command>, e.g. init/add/build/cluster
