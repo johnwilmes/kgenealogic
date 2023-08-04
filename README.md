@@ -27,8 +27,8 @@ python3 -m kgenealogic add [-p <project-file>] ... # files to import
 python3 -m kgenealogic build [-p <project-file>] ... # build crossover probability model and find negative triangulations
 python3 -m kgenealogic cluster [-p <project-file>] [-o <out-file>] <config-file>
 
-kgenealogic --help # general help
-kgenealogic <command> --help # help for <command>, e.g. init/add/build/cluster
+python3 -m kgenealogic --help # general help
+python3 -m kgenealogic <command> --help # help for <command>, e.g. init/add/build/cluster
 ```
 
 ## Algorithms
