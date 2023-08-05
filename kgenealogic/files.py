@@ -102,7 +102,7 @@ def validate_config_tree(config, seeds):
 
     for branch in ('maternal', 'paternal'):
         if branch in config.data:
-            config[branch].revalidate(CLUSTER_TREE_SCHEMA)
+            config[branch].revalidate(yaml.EmptyDict() | CLUSTER_TREE_SCHEMA)
             validate_config_tree(config[branch], seeds)
 
 def read_cluster_config(path):

@@ -284,6 +284,9 @@ def get_clusters(graph, seeds, max_rounds=None, fix_seeds=True):
         
         # TODO would be nice if seg_sum took confidence-weighted sum, but this is circular. does it converge?
         seg_sum = graph.groupby(['kit1', 'label']).weight.sum().unstack(level=-1).fillna(0)
+        for l in ['P', 'M']:
+            if l not in seg_sum:
+                seg_sum[l] = 0
         labels['paternal'] = seg_sum.P-seg_sum.M
         labels['confidence'] = labels['paternal'].abs()/labels['weight']
         available = np.any([
