@@ -5,6 +5,7 @@ description = "Genetic genealogy tool for tree structure inference"
 authors = ["John Wilmes <jw@johnwilmes.name>"]
 license = "MIT"
 readme = "README.md"
+include = ["examples/*"]
 
 [tool.poetry.dependencies]
 python = "<3.12,>=3.8"
