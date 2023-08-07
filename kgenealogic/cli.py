@@ -92,28 +92,6 @@ def add(
             typer.echo(f"Unrecognized file type: {path}", err=True)
 
 @app.command()
-def build(
-    project: PROJECT_OPTION = DEFAULT_PROJECT,
-    force:  Annotated[bool, typer.Option(help="Force re-build, even if already built")] = False
-):
-    """
-    Process all added data files in preparation for clustering.
-
-    - Uses all segments with provided lengths in order to build a model of crossover probability, to
-    impute cM lengths of derived segments
-
-    - Finds all "negative" triangles, where two target kits have overlapping matching segments on a
-    common source kit, but the segment does not appear as a triangulation for the three kits
-    """
-    engine = sql.create_engine(f"sqlite:///{project}")
-    if not force:
-        if kg.is_cache_valid(engine):
-            typer.echo("Project is already built. Use --force to re-build", err=True)
-            raise typer.Abort()
-
-    kg.build_cache(engine)
-
-@app.command()
 def cluster(
     config: Annotated[Path, typer.Argument(
         file_okay=True,
@@ -143,11 +121,13 @@ def cluster(
       (1) just the kit number to be included, as a string, or (2) a mapping indicating a kit number
       and some of its matches to be included. In the second format, the valid keys are
 
-      -- id: the (base) kit number as a string (required)
-      -- matches (optional, floating point): if this is given, it is interpreted as the minimum
+      --- id: the (base) kit number as a string (required)
+
+      --- matches (optional, floating point): if this is given, it is interpreted as the minimum
       length in cM of a match so that if kit2 matches the base kit anywhere with this length, then
       kit2 will also be included
-      -- triangles (optional, floating point): if this is given, it is interpreted as the minimum
+
+      --- triangles (optional, floating point): if this is given, it is interpreted as the minimum
       length in cM of a triangle so that if kit2 participates in a triangle the base kit anywhere
       with this length, with any third kit, then kit2 will also be included.
 
@@ -164,24 +144,32 @@ def cluster(
       each node of the of the tree. The more accurate seeds are available, the more reliable and
       useful the results will be. This root node of the tree is specified with the "tree" key. At
       each node of the tree, you can optionally specify any of:
+
       1. a "kits" key, associated with a list of kit numbers known to reside at that node of the
       tree. See below for additional options.
+
       2. a "paternal" key, formatted as a node of the tree, specifying the paternal branch
-      2. a "maternal" key, formatted as a node of the tree, specifying the maternal branch
+
+      3. a "maternal" key, formatted as a node of the tree, specifying the maternal branch
       The tree key is required
 
     Entries of each "kits" list of the tree can be specified in one of two ways:
 
     - just the kit number as a string
+
     - a mapping with the following keys:
-      -- id: the kit number as a string (required)
-      -- autox: whether to classify kits that match this kit on the X chromosome as necessarily
+
+      --- id: the kit number as a string (required)
+
+      --- autox: whether to classify kits that match this kit on the X chromosome as necessarily
       maternal (optional, boolean). If the kit corresponds to a male child of the parents
       represented by the paternal and maternal branches of this node of the tree, it makes sense to
       use a value of true. Otherwise omit the key or set it to false (the default)
-      -- negative: whether to use negative triangulations for this node, if available (option,
+
+      --- negative: whether to use negative triangulations for this node, if available (option,
       boolean, default false)
-      -- float: whether to keep the kit at this node of the tree, or attempt to float it into the
+
+      --- float: whether to keep the kit at this node of the tree, or attempt to float it into the
       branches (optional, boolean). If float is false, this seed will be kept at this node of the
       tree - this is desired when the kit is known to be a descendant of the parents represented by
       the maternal and paternal branches at this node. If float is true, this seed will be pushed
@@ -190,54 +178,31 @@ def cluster(
       grandfather, but nothing more is known). If float is not set, the default behavior is to
       treat it as false if triangulations are available, and otherwise treat it as true.
 
-    For example:
+    An example configuration file is available in the "examples" directory included with the source
+    of this package.
 
-    exclude: # these kits will be excluded from the clustering
-      - T000001
-      - T000002
-    min_length: 8.5
-    tree:
-      kits:
-        - # me (male)
-          id: T000003
-          autox: true
-          float: false
-          negative: true
-        - # my sister's son
-          id: T000004
-          float: false
-      paternal:
-        kits:
-          - T000004 # my father's grand-niece
-        paternal:
-          kits:
-            - T000005 # a distant cousin on my paternal grandfather's side
-        maternal:
-          # I don't know any relatives of my paternal grandmother, but I'd like any that are
-          # discovered to be present in the output
-      maternal:
-        kits:
-          - T000006 # a relative of my mother, but not my father, with no other information
 
     This will produce an output file separating my maternal and paternal relatives, with the
     paternal relatives further split into paternal grandfather and paternal grandmother relatives.
     The output file will be a CSV file with several columns:
+
     - kit, specifying the kit number
+
     - ahnentafel, the ahnentafel number of the most distant relative of the root to which the kit
       is determiend to be related
+
     - label<n>, where n varies from 0 to depth of the tree minus 1. This is 'M' if the kit is put
       on the maternal side at that depth, and P if it is put on the paternal side. The list of
       these labels is equivalent to the value in the ahnentafel field
+
     - confidence<n>, a number between 0 and 1 indicating a rough confidence with which the kit is
-      given label<n>. These numbers should not be interpreted as probabilities. A value of 1
+      given label<n>. These numbers should NOT be interpreted as probabilities. A value of 1
       indicates that all of the kit's matches have labels consistent with the kit's label at this
       depth.
+
     """
 
     engine = sql.create_engine(f"sqlite:///{project}")
-    if not kg.is_cache_valid(engine):
-        typer.echo("Project is not yet built. First run kgenealogic build", err=True)
-        raise typer.Abort()
     config = kg_files.read_cluster_config(config)
     clusters = kg.cluster_data(engine, config)
     kg_files.write_clusters(clusters, outfile)

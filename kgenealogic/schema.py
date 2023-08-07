@@ -1,11 +1,21 @@
 import sqlalchemy as sql
 import pandas as pd
+import importlib.resources as resources
 
-SCHEMA_VERSION = 0.1
+SCHEMA_VERSION = "0.2"
+GENETMAP_PATH='genetmap.csv'
+GENETMAP_DTYPE={'chromosome': str, 'position': int, 'cm': float}
+
+@sql.event.listens_for(sql.engine.Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
 metadata = sql.MetaData()
 
-kgenealogic = sql.Table(
-    "kgenealogic",
+meta = sql.Table(
+    "meta",
     metadata,
     sql.Column("key", sql.String, nullable=False, primary_key=True),
     sql.Column("value", sql.String, nullable=False),
@@ -21,13 +31,23 @@ kit = sql.Table(
     sql.Column("sex", sql.String),
 )
 
+genetmap = sql.Table(
+    "genetmap",
+    metadata,
+    sql.Column("chromosome", sql.String, nullable=False, index=True),
+    sql.Column("position", sql.Integer, nullable=False, index=True),
+    sql.Column("cm", sql.Float, nullable=False),
+    sql.UniqueConstraint("chromosome", "position"),
+)
+
 source = sql.Table(
     "source",
     metadata,
-    sql.Column("kit", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, primary_key=True),
-    sql.Column("has_segments", sql.Boolean, nullable=False, default=False),
-    sql.Column("has_triangles", sql.Boolean, nullable=False, default=False),
-    sql.Column("has_negative", sql.Boolean, nullable=False, default=False),
+    sql.Column("kit", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, primary_key=True,
+               sqlite_on_conflict_primary_key="IGNORE"),
+    sql.Column("match", sql.Integer),
+    sql.Column("triangle", sql.Integer),
+    sql.Column("negative", sql.Integer),
 )
 
 segment = sql.Table(
@@ -38,7 +58,6 @@ segment = sql.Table(
     sql.Column("start", sql.Integer, nullable=False),
     sql.Column("end", sql.Integer, nullable=False),
     sql.Column("length", sql.Float, index=True),
-    sql.Column("generated", sql.Boolean, nullable=False),
     sql.UniqueConstraint("chromosome", "start", "end", sqlite_on_conflict='IGNORE'),
 )
 
@@ -48,6 +67,7 @@ match = sql.Table(
     sql.Column("segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
     sql.Column("kit1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.Column("kit2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
+    sql.Column("batch", sql.Integer, nullable=False, index=True),
     sql.UniqueConstraint("segment", "kit1", "kit2", sqlite_on_conflict='IGNORE'),
 )
 
@@ -58,6 +78,7 @@ triangle = sql.Table(
     sql.Column("kit1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.Column("kit2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.Column("kit3", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
+    sql.Column("batch", sql.Integer, nullable=False, index=True),
     sql.UniqueConstraint("segment", "kit1", "kit2", "kit3", sqlite_on_conflict='IGNORE'),
 )
 
@@ -75,18 +96,26 @@ overlap = sql.Table(
 negative = sql.Table(
     "negative",
     metadata,
-    sql.Column("overlap", sql.Integer, sql.ForeignKey("overlap.id"), nullable=False, index=True),
-    sql.Column("neg_segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
+    sql.Column("overlap", sql.Integer, sql.ForeignKey("overlap.id", ondelete="CASCADE"),
+               nullable=False, index=True),
+    sql.Column("neg_segment", sql.Integer, sql.ForeignKey("segment.id", ondelete="CASCADE"),
+               nullable=False, index=True),
     sql.UniqueConstraint("overlap", "neg_segment", sqlite_on_conflict='IGNORE'),
 )
 
 def initialize(engine):
     metadata.drop_all(engine)
     metadata.create_all(engine)
+
     kg_meta = pd.DataFrame([
         dict(key='schema_version', value=str(SCHEMA_VERSION)),
-        dict(key='cache_valid', value=str('N')),
+        dict(key='batch', value=str(0)),
     ])
+
+    import kgenealogic as kg
+    genetmap = pd.read_csv(resources.files(kg).joinpath(GENETMAP_PATH), dtype=GENETMAP_DTYPE)
+
     with engine.connect() as conn:
-        kg_meta.to_sql("kgenealogic", conn, if_exists="append", index=False)
+        kg_meta.to_sql("meta", conn, if_exists="append", index=False)
+        genetmap.to_sql("genetmap", conn, if_exists="append", index=False)
         conn.commit()

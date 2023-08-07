@@ -105,8 +105,7 @@ def cluster_data(engine, config):
     )
     trisource_query = (
         sql.select(source.c.kit)
-        .where(source.c.has_triangles)
-        .where(source.c.has_negative)
+        .where(source.c.triangle.is_not(None))
     )
 
     with engine.connect() as conn:
@@ -160,8 +159,8 @@ def cluster_data(engine, config):
         return parsed
     tree = build_seed_tree(config.tree, 1)
 
-    source_tri = lambda source: get_triangles(engine, source, config.min_length)
-    clusters = recursive_cluster(kits, tree, graph, source_tri)
+    source_neg = lambda s_kit: get_negative(engine, s_kit, config.min_length)
+    clusters = recursive_cluster(kits, tree, graph, source_neg)
 
     kitids = kits.reset_index().set_index('id').kitid
     clusters['kit'] = clusters.kit.map(kitids)
@@ -171,36 +170,18 @@ def cluster_data(engine, config):
 
     return clusters
 
-def get_triangles(engine, source, min_length):
-    neg_tri = (
-        sql.select(
-            overlap.c.target1.label("kit1"),
-            overlap.c.target2.label("kit2"),
-            sql.func.sum(-segment.c.length).label("weight"),
-        )
-        .join_from(negative, overlap)
-        .join(segment, negative.c.neg_segment==segment.c.id)
-        .where(overlap.c.source==source)
-        .where(segment.c.length >= min_length)
-        .group_by(overlap.c['target1', 'target2'])
-    )
-
-    with engine.connect() as conn:
-        result = pd.read_sql(neg_tri, conn)
-    return result
-
-def recursive_cluster(kits, tree, graph, source_tri):
+def recursive_cluster(kits, tree, graph, source_neg):
     # graph format: kit1/kit2/weight
     # initial value: all pairwise matches, suitably weighted relative to triangles that will be added?
     nonfloat = []
     tri_graph = graph
-    for source in tree.values:
-        if source.negative:
+    for s_kit in tree.values:
+        if s_kit.negative:
             tri_graph = tri_graph.set_index(['kit1', 'kit2']).add(
-                source_tri(source.kit).set_index(['kit1', 'kit2']), fill_value=0
+                source_neg(s_kit.kit).set_index(['kit1', 'kit2']), fill_value=0
             ).reset_index()
-        if not source.floating:
-            nonfloat.append(source.kit)
+        if not s_kit.floating:
+            nonfloat.append(s_kit.kit)
         
     depth = int(np.log2(tree.ahnentafel))
     result = pd.DataFrame(dict(kit=kits))
@@ -234,7 +215,7 @@ def recursive_cluster(kits, tree, graph, source_tri):
         for label, kit_branch in result.groupby('label'):
             if label in tree.branches:
                 tree_branch = tree.branches[label]
-                branch = recursive_cluster(kit_branch.kit, tree_branch, graph, source_tri)
+                branch = recursive_cluster(kit_branch.kit, tree_branch, graph, source_neg)
                 branch[f"label{depth}"] = branch.kit.map(kit_branch.set_index('kit').label)
                 branch[f"confidence{depth}"] = branch.kit.map(kit_branch.set_index('kit').confidence)
             else:
@@ -308,3 +289,153 @@ def get_clusters(graph, seeds, max_rounds=None, fix_seeds=True):
 
     labels['label'] = labels.label.fillna('').astype(str)
     return labels.reset_index()[['kit', 'label', 'confidence']]
+
+def get_negative(engine, s_kit, min_length):
+    build_negative(engine, s_kit)
+
+    neg_tri = (
+        sql.select(
+            overlap.c.target1.label("kit1"),
+            overlap.c.target2.label("kit2"),
+            sql.func.sum(-segment.c.length).label("weight"),
+        )
+        .join_from(negative, overlap)
+        .join(segment, negative.c.neg_segment==segment.c.id)
+        .where(overlap.c.source==s_kit)
+        .where(segment.c.length >= min_length)
+        .group_by(overlap.c['target1', 'target2'])
+    )
+
+    with engine.connect() as conn:
+        result = pd.read_sql(neg_tri, conn)
+    return result
+
+def build_negative(engine, s_kit):
+    with engine.connect() as conn:
+        status = conn.execute(sql.select(source).where(source.c.kit==s_kit)).mappings().one_or_none()
+    if (not status) or (not status['match']) or (not status['triangle']):
+        # missing triangles or matches
+        return False
+
+    batch = max(status['match'], status['triangle'])
+    neg_batch = status['negative'] or 0
+    if neg_batch >= batch:
+        # up to date
+        return True
+
+    update_source = sql.update(source).where(source.c.kit==s_kit).values(negative=batch)
+    from kgenealogic.data import as_internal_segment
+
+    valid_neg_targets = (
+        sql.select(
+            triangle.c.kit2.label("target"),
+        )
+        .where(triangle.c.kit1==s_kit)
+        .distinct()
+        .cte()
+    )
+
+    valid_matches = (
+        sql.select(
+            valid_neg_targets.c.target,
+            segment.c.chromosome,
+            segment.c.start,
+            segment.c.end,
+        )
+        .join_from(valid_neg_targets, match, sql.and_(
+            match.c.kit1==s_kit, match.c.kit2==valid_neg_targets.c.target
+        ))
+        .join(segment, match.c.segment==segment.c.id)
+        .cte()
+    )
+
+    m1, m2 = valid_matches.alias(), valid_matches.alias()
+
+    select_overlap = (
+        sql.select(
+            m1.c.target.label("target1"),
+            m2.c.target.label("target2"),
+            m1.c.chromosome,
+            sql.func.max(m1.c.start, m2.c.start).label("start"),
+            sql.func.min(m1.c.end, m2.c.end).label("end"),
+        )
+        .join_from(m1, m2, m1.c.chromosome==m2.c.chromosome)
+        .where(m1.c.target!=m2.c.target)
+        .where(m1.c.start < m2.c.end)
+        .where(m2.c.start < m1.c.end)
+    )
+
+    with engine.connect() as conn:
+        conn.execute(sql.delete(overlap).where(overlap.c.source==s_kit))
+        match_overlap = pd.read_sql(select_overlap, conn)
+    match_overlap = as_internal_segment(engine, match_overlap)
+
+    match_overlap = match_overlap[["target1", "target2", "segment"]]
+    match_overlap["source"] = s_kit
+    with engine.connect() as conn:
+        conn.execute(overlap.insert(), match_overlap.to_dict(orient="records"))
+        conn.commit()
+        
+    seg_over, seg_tri = segment.alias(), segment.alias()
+    select_neg_overlap = (
+        sql.select(
+            overlap.c.id.label("overlap"),
+            seg_over.c.chromosome,
+            seg_over.c.start,
+            seg_over.c.end,
+            seg_tri.c.start.label("tri_start"),
+            seg_tri.c.end.label("tri_end"),
+        )
+        .join_from(overlap, seg_over, overlap.c.segment==seg_over.c.id)
+        .join(triangle, sql.and_(
+            overlap.c.source==triangle.c.kit1,
+            overlap.c.target1==triangle.c.kit2,
+            overlap.c.target2==triangle.c.kit3,
+        ), isouter=True)
+        .join(seg_tri, triangle.c.segment==seg_tri.c.id)
+        .where(sql.or_(
+            seg_tri.c.id.is_(None),
+            sql.and_(
+                seg_tri.c.chromosome==seg_over.c.chromosome,
+                seg_tri.c.start <= seg_over.c.end,
+                seg_tri.c.end >= seg_over.c.start,
+            ),
+        ))
+        .where(overlap.c.source==s_kit)
+    )
+    with engine.connect() as conn:
+        neg_overlap = pd.read_sql(select_neg_overlap, conn)
+
+    neg_base = (
+        neg_overlap[neg_overlap.tri_start.isnull()]
+        .drop(columns=["tri_start", "tri_end"])
+        .drop_duplicates()
+    )
+    neg_remain = []
+    neg_group_cols = ["overlap", "chromosome"]
+    for _, tri_data in neg_overlap.dropna().groupby(neg_group_cols):
+        id_vals = tri_data[neg_group_cols].iloc[0].to_dict()
+        start, end = tri_data[['start', 'end']].iloc[0]
+        # negative triangulations are the raw triangulation (start to end),
+        # excluding all the positive parts (tri_start to tri_end)
+        for _, row in tri_data.sort_values('tri_start').iterrows():
+            if row.tri_start > start:
+                neg_remain.append(dict(
+                    start=start,
+                    end=int(row.tri_start),
+                    **id_vals))
+            start = int(row.tri_end)
+        if end > start:
+             neg_remain.append(dict(
+                start=start,
+                end=end,
+                **id_vals))       
+    neg_tri = pd.concat([neg_base, pd.DataFrame(neg_remain)], ignore_index=True).drop_duplicates()
+    neg_tri = as_internal_segment(engine, neg_tri).drop_duplicates()
+    neg_tri = neg_tri[["overlap", "segment"]].rename(columns=dict(segment="neg_segment"))
+    with engine.connect() as conn:
+        conn.execute(negative.insert(), neg_tri.to_dict(orient="records"))
+        conn.execute(update_source)
+        conn.commit()
+
+    return True

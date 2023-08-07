@@ -24,7 +24,6 @@ pip install kgenealogic
 ```
 python3 -m kgenealogic init [-p <project-file>]
 python3 -m kgenealogic add [-p <project-file>] ... # files to import
-python3 -m kgenealogic build [-p <project-file>] ... # build crossover probability model and find negative triangulations
 python3 -m kgenealogic cluster [-p <project-file>] [-o <out-file>] <config-file>
 
 python3 -m kgenealogic --help # general help

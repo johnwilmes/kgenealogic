@@ -1,0 +1,38 @@
+include:
+  -
+    # include T000001 and all kits matching it somewhere on a segment of length >= 10cM
+    id: T000001
+    matches: 10
+  -
+    # include T000002 and all kits triangulating with it somewhere on a segment of length >= 8cM
+    id: T000002
+    triangles: 8
+exclude: # these kits will be excluded from the clustering
+  - T000003
+  - T000004
+min_length: 8.5 # only consider segments of length at least 8.5cM
+tree:
+  kits:
+    -
+      # me (male)
+      id: T000001
+      autox: true
+      float: false
+      negative: true
+    -
+      # a nephew
+      id: T000002
+      float: false
+  paternal:
+    kits:
+      - T000005 # my father's grand-niece
+    paternal:
+      kits:
+        - T000006 # a distant cousin on my paternal grandfather's side
+    maternal:
+      # I don't know any relatives of my paternal grandmother, but I'd like any that are
+      # discovered to be present in the output
+  maternal:
+    kits:
+      - T000006 # a relative of my mother, but not my father, with no other information
+
