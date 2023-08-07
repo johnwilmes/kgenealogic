@@ -90,7 +90,7 @@ def cluster_data(engine, config):
                     include.update([int(x) for x in k_nbr.kit])
         kits = kits[kits.isin(include|seeds)]
 
-    kits = kits[~kits.index.isin(exclude)]
+    kits = kits[~kits.isin(exclude)]
 
     graph_query = (
         sql.select(
