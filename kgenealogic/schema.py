@@ -45,32 +45,34 @@ source = sql.Table(
     metadata,
     sql.Column("kit", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, primary_key=True,
                sqlite_on_conflict_primary_key="IGNORE"),
-    sql.Column("match", sql.Integer),
-    sql.Column("triangle", sql.Integer),
-    sql.Column("negative", sql.Integer),
+    sql.Column("match", sql.Integer), # batch number of most recent matches
+    sql.Column("triangle", sql.Integer), # batch number of most recent triangles
+    sql.Column("negative", sql.Integer), # negative triangles incorporate data from this batch
 )
 
 segment = sql.Table(
     "segment",
     metadata,
     sql.Column("id", sql.Integer, nullable=False, primary_key=True),
-    sql.Column("chromosome", sql.String, nullable=False, index=True),
+    sql.Column("chromosome", sql.String, nullable=False, index=True), # chromosome 23 is "X"
     sql.Column("start", sql.Integer, nullable=False),
     sql.Column("end", sql.Integer, nullable=False),
     sql.Column("length", sql.Float, index=True),
     sql.UniqueConstraint("chromosome", "start", "end", sqlite_on_conflict='IGNORE'),
 )
 
+# pairwise matches are included with both permutations of (kit1, kit2)
 match = sql.Table(
     "match",
     metadata,
     sql.Column("segment", sql.Integer, sql.ForeignKey("segment.id"), nullable=False, index=True),
     sql.Column("kit1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.Column("kit2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
-    sql.Column("batch", sql.Integer, nullable=False, index=True),
+    sql.Column("batch", sql.Integer, nullable=False, index=True), # when it was added
     sql.UniqueConstraint("segment", "kit1", "kit2", sqlite_on_conflict='IGNORE'),
 )
 
+# triangles are included with all 6 permutations of (kit1, kit2, kit3)
 triangle = sql.Table(
     "triangle",
     metadata,
@@ -78,10 +80,12 @@ triangle = sql.Table(
     sql.Column("kit1", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.Column("kit2", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
     sql.Column("kit3", sql.Integer, sql.ForeignKey("kit.id"), nullable=False, index=True),
-    sql.Column("batch", sql.Integer, nullable=False, index=True),
+    sql.Column("batch", sql.Integer, nullable=False, index=True), # when it was added
     sql.UniqueConstraint("segment", "kit1", "kit2", "kit3", sqlite_on_conflict='IGNORE'),
 )
 
+# gives segments where (source, target1) and (source, target2) have overlapping matches
+# used for finding negative triangles
 overlap = sql.Table(
     "overlap",
     metadata,
@@ -107,15 +111,15 @@ def initialize(engine):
     metadata.drop_all(engine)
     metadata.create_all(engine)
 
-    kg_meta = pd.DataFrame([
+    kg_meta_init = [
         dict(key='schema_version', value=str(SCHEMA_VERSION)),
         dict(key='batch', value=str(0)),
-    ])
+    ]
 
     import kgenealogic as kg
-    genetmap = pd.read_csv(resources.files(kg).joinpath(GENETMAP_PATH), dtype=GENETMAP_DTYPE)
+    genetmap_df = pd.read_csv(resources.files(kg).joinpath(GENETMAP_PATH), dtype=GENETMAP_DTYPE)
 
     with engine.connect() as conn:
-        kg_meta.to_sql("meta", conn, if_exists="append", index=False)
-        genetmap.to_sql("genetmap", conn, if_exists="append", index=False)
+        conn.execute(meta.insert(), kg_meta_init)
+        conn.execute(genetmap.insert(), genetmap_df.to_dict(orient="records"))
         conn.commit()
