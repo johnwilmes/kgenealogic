@@ -25,12 +25,24 @@ class SeedTree:
     branches: dict[str, typing.Any] = field(default_factory=dict)
 
 def flatten(tree, values):
+    """Flatten a SeedTree by putting internal kit ids into values list."""
     for b in tree.branches.values():
         flatten(b, values)
     values.extend([v.kit for v in tree.values])
     return values
 
 def cluster_data(engine, config):
+    """Cluster data according to the config file
+
+    The behavior is documented in the CLI cluster command.
+
+    Args:
+        engine: the sqlalchemy engine for the project database
+        config: a ClusterConfig object describing the clustering to perform
+
+    Returns:
+        a pandas dataframe classifying kits, as described in the CLI cluster command documentation
+    """
     with engine.connect() as conn:
         kits = pd.read_sql(sql.select(kit.c['id', 'kitid']), conn)
     kits = kits.set_index('kitid').id
@@ -171,8 +183,22 @@ def cluster_data(engine, config):
     return clusters
 
 def recursive_cluster(kits, tree, graph, source_neg):
-    # graph format: kit1/kit2/weight
-    # initial value: all pairwise matches, suitably weighted relative to triangles that will be added?
+    """Recursively partition a list of kits using a given tree structure.
+
+    Args:
+        kits: pandas Series of internal kit ids to be be included in the segmentation
+        tree: a SeedTree describing the structure of the segmentation and the seeds to be used
+        graph: the a pandas DataFrame describing the graph of weighted relationships to be used to
+            construct the segmentation, in sparse COO format. Columns 'kit1' and 'kit2' give internal
+            kit numbers, and column 'weight' gives the weight of the edge between them. Symmetric,
+            so 'kit1' and 'kit2' appear in both orders, if there is an edge between them.
+        source_neg: a function mapping internal kit numbers to negative triangles in the same
+            format as `graph`
+
+    Returns:
+        pandas DataFrame in the same format as the result of cluster_data, but with internal kit
+        numbers instead of external kit id strings
+    """
     nonfloat = []
     tri_graph = graph
     for s_kit in tree.values:
@@ -231,6 +257,9 @@ def recursive_cluster(kits, tree, graph, source_neg):
     return result
 
 def get_adjacency(edges, weights):
+    """Given a COO sparse graph, get a dense adjacency matrix on vertices 0:n and translation from
+    vertex names to vertex indices.
+    """
     vertex_to_id = (
         pd.concat(edges)
         .drop_duplicates()
@@ -244,6 +273,7 @@ def get_adjacency(edges, weights):
     return graph, vertex_to_id
 
 def get_clusters(graph, seeds, max_rounds=None, fix_seeds=True):
+    """Greedily segment each component of graph to respect the labels of seeds."""
     graph = graph.copy()
     labels = (
         graph
@@ -291,6 +321,7 @@ def get_clusters(graph, seeds, max_rounds=None, fix_seeds=True):
     return labels.reset_index()[['kit', 'label', 'confidence']]
 
 def get_negative(engine, s_kit, min_length):
+    """Get all negative triangles for a kit s_kit of length at least min_length."""
     build_negative(engine, s_kit)
 
     neg_tri = (
@@ -311,6 +342,7 @@ def get_negative(engine, s_kit, min_length):
     return result
 
 def build_negative(engine, s_kit):
+    """Check if negative triangles are cached for source s_kit, and build if necessary."""
     with engine.connect() as conn:
         status = conn.execute(sql.select(source).where(source.c.kit==s_kit)).mappings().one_or_none()
     if (not status) or (not status['match']) or (not status['triangle']):

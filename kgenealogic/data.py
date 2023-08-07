@@ -27,6 +27,7 @@ def add_sources(engine, sources):
         conn.commit()
 
 def set_segment_lengths(engine):
+    """Compute cM lengths for segments using dnapainter genetic map."""
     seg_pos = (
         sql.select(
             segment.c["id", "chromosome", "start", "end"],
@@ -78,6 +79,7 @@ def set_segment_lengths(engine):
         conn.commit()
 
 def as_internal_kitid(engine, data, kitid_fields):
+    """Replace external kitid with internal kit number, inserting into kit table as needed."""
     kit_ids = pd.concat([data[c] for c in kitid_fields]).drop_duplicates()
     insert_kit_id = kit.insert().values(kitid=sql.bindparam('kit'))
     select_kit_id = sql.select(kit.c["id", "kitid"])
@@ -92,6 +94,8 @@ def as_internal_kitid(engine, data, kitid_fields):
     return data
 
 def as_internal_segment(engine, data):
+    """Replace chromosome/start/end triplet with internal segment id, inserting into segment table
+    as needed."""
     seg_df = (
         data[["chromosome", "start", "end"]]
         .groupby(["chromosome", "start", "end"])
@@ -109,6 +113,7 @@ def as_internal_segment(engine, data):
     return data
 
 def update_kit_data(engine, kit_data):
+    """Update name/email/sex fields of kit table"""
     insert_kit_data = (
         kit.update()
         .where(kit.c.id==sql.bindparam("kit"))
@@ -124,7 +129,14 @@ def update_kit_data(engine, kit_data):
         conn.commit()
 
 def import_matches(engine, data):
-    """ matches fields: kit1, kit2, chromosome, start, end, name, email, sex"""
+    """Import pairwise matches to project database from dataframe.
+
+    Args:
+        engine: the sqlalchemy engine for the project database
+        data: a pandas dataframe with string fields kit1, kit2, chromosome, start, end, name,
+        email, sex. Every kit appearing in the kit1 field is assumed to be a "source" for the
+        matches
+    """
     data = as_internal_kitid(engine, data, ['kit1', 'kit2'])
 
     kit_data = (
@@ -164,6 +176,13 @@ def import_matches(engine, data):
         conn.commit()
 
 def import_triangles(engine, data):
+    """Import triangulations to project database from dataframe.
+
+    Args:
+        engine: the sqlalchemy engine for the project database
+        data: a pandas dataframe with string fields kit1, kit2, kit3, chromosome, start, end, name,
+        email. Every kit appearing in the kit1 field is assumed to be a "source" for the triangles
+    """
     tri_df = as_internal_kitid(engine, data, ['kit1', 'kit2', 'kit3'])
 
     kit_data = (
