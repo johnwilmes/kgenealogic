@@ -261,22 +261,6 @@ def recursive_cluster(kits, tree, graph, source_neg):
 
     return result
 
-def get_adjacency(edges, weights):
-    """Given a COO sparse graph, get a dense adjacency matrix on vertices 0:n and translation from
-    vertex names to vertex indices.
-    """
-    vertex_to_id = (
-        pd.concat(edges)
-        .drop_duplicates()
-        .rename('id')
-        .reset_index(drop=True)
-    )
-    n = len(vertex_to_id)
-    id_to_vertex = vertex_to_id.reset_index().set_index('id')['index']
-    
-    graph = sp.sparse.coo_array((weights, (edges[0].map(id_to_vertex), edges[1].map(id_to_vertex))), shape=(n,n)).toarray()
-    return graph, vertex_to_id
-
 def get_clusters(graph, seeds, max_rounds=None, fix_seeds=True):
     """Greedily segment each component of graph to respect the labels of seeds."""
     graph = graph.copy()
@@ -323,7 +307,9 @@ def get_clusters(graph, seeds, max_rounds=None, fix_seeds=True):
         labels.loc[next_kit.name, 'label'] = next_label
 
     labels['label'] = labels.label.fillna('').astype(str)
-    return labels.reset_index()[['kit', 'label', 'confidence']]
+    labels = labels.reset_index()[['kit', 'label', 'confidence']]
+    isolated_seeds = seeds[~seeds.kit.isin(labels.kit)]
+    return pd.concat([labels, isolated_seeds], ignore_index=True)
 
 def get_negative(engine, s_kit, min_length):
     """Get all negative triangles for a kit s_kit of length at least min_length."""
