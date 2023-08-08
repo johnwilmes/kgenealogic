@@ -24,12 +24,14 @@ class SeedTree:
     values: list[Seed] = field(default_factory=list)
     branches: dict[str, typing.Any] = field(default_factory=dict)
 
-def flatten(tree, values):
+def flatten(tree, seeds=None):
     """Flatten a SeedTree by putting internal kit ids into values list."""
+    if seeds is None:
+        seeds = {}
     for b in tree.branches.values():
-        flatten(b, values)
-    values.extend([v.kit for v in tree.values])
-    return values
+        flatten(b, seeds)
+    seeds.update({v.kit: tree.ahnentafel for v in tree.values})
+    return seeds
 
 def cluster_data(engine, config):
     """Cluster data according to the config file
@@ -171,13 +173,16 @@ def cluster_data(engine, config):
         return parsed
     tree = build_seed_tree(config.tree, 1)
 
+    seed_labels = flatten(tree)
+
     source_neg = lambda s_kit: get_negative(engine, s_kit, config.min_length)
     clusters = recursive_cluster(kits, tree, graph, source_neg)
-
+    
+    clusters['seed'] = clusters.kit.map(seed_labels).astype('Int64')
     kitids = kits.reset_index().set_index('id').kitid
     clusters['kit'] = clusters.kit.map(kitids)
 
-    fixed_cols = ['kit', 'ahnentafel']
+    fixed_cols = ['kit', 'ahnentafel', 'seed']
     clusters = clusters[fixed_cols + [c for c in clusters.columns if c not in fixed_cols]]
 
     return clusters
@@ -218,7 +223,7 @@ def recursive_cluster(kits, tree, graph, source_neg):
     if tree.branches and (len(result)>0) and (len(tri_graph) > 0):
         flat_seeds = []
         for label, tree_branch in tree.branches.items():
-            branch_seeds = flatten(tree_branch, [])
+            branch_seeds = flatten(tree_branch).keys()
             branch_seeds = pd.DataFrame(dict(kit=branch_seeds))
             branch_seeds['label'] = label
             flat_seeds.append(branch_seeds)

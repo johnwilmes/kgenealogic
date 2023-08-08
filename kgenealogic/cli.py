@@ -191,6 +191,8 @@ def cluster(
     - ahnentafel, the ahnentafel number of the most distant relative of the root to which the kit
       is determiend to be related
 
+    - seed, the ahnentafel number of the node at which this kit was listed as a seed, if any
+
     - label<n>, where n varies from 0 to depth of the tree minus 1. This is 'M' if the kit is put
       on the maternal side at that depth, and P if it is put on the paternal side. The list of
       these labels is equivalent to the value in the ahnentafel field
