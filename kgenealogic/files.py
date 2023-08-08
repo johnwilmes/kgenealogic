@@ -17,6 +17,7 @@ GED_MATCH_COLS = {
     'MatchedEmail': 'email',
 }
 def is_ged_matches(path):
+    """Check if file at path is a valid GEDmatch pairwise matches file."""
     try:
         csv = pd.read_csv(path, dtype=str)
     except:
@@ -24,6 +25,7 @@ def is_ged_matches(path):
     return set(GED_MATCH_COLS.keys()).issubset(csv.columns)
 
 def read_ged_matches(path):
+    """Load GEDmatch pairwise matches file into pandas dataframe."""
     dtype = defaultdict(lambda: str)
     dtype['B37Start'] = int
     dtype['B37End'] = int
@@ -43,6 +45,7 @@ GED_TRIANGLE_COLS = {
     'cM': 'length',
 }
 def is_ged_triangles(path):
+    """Check if file at path is a valid GEDmatch triangulation file."""
     try:
         csv = pd.read_csv(path, dtype=str)
     except:
@@ -50,6 +53,16 @@ def is_ged_triangles(path):
     return set(GED_TRIANGLE_COLS.keys()).issubset(csv.columns)
 
 def read_ged_triangles(path, primary_kit):
+    """Load GEDmatch triangulation file into pandas dataframe.
+
+    Args:
+        path: path to the file
+        primary_kit: the kit from which the triangulations were generated
+
+    Returns:
+        A pandas dataframe in the format expected by data.import_triangles.
+        Specifically, primary_kit will appear as kit1 in the dataframe
+    """
     dtype = defaultdict(lambda: str)
     dtype['B37 Start'] = int
     dtype['B37 End'] = int
@@ -58,6 +71,7 @@ def read_ged_triangles(path, primary_kit):
     tri['kit1'] = primary_kit
     return tri
 
+# StrictYAML schemas used for cluster config files
 CLUSTER_KIT_SCHEMA = yaml.Str() | yaml.Map({
     'id': yaml.Str(),
     yaml.Optional('autox', default=False): yaml.Bool(),
@@ -91,6 +105,15 @@ class ClusterConfig:
     seeds: set[str]
 
 def validate_config_tree(config, seeds):
+    """Recursively validate the StrictYAML tree schema and extract all seeds.
+
+    Seeds that appear in the config file as strings are expanded to dictionaries with default
+    values for the keys.
+
+    Args:
+        config: the StrictYAML document at the current node of the tree
+        seeds: the list of all encountered seeds
+    """
     expanded_kits = []
     for k in config.data.get('kits', []):
         if type(k)==str:
@@ -106,6 +129,16 @@ def validate_config_tree(config, seeds):
             validate_config_tree(config[branch], seeds)
 
 def read_cluster_config(path):
+    """Parse a clustering config file in StrictYAML format.
+
+    The schema is given above in code, and is documented in the cluster CLI command.
+
+    Args:
+        path: path to the cluster config file
+
+    Returns:
+        A ClusterConfig object representing the contents of the config file
+    """
     with open(path) as f:
         config_yaml = f.read()
     parsed = yaml.load(config_yaml, CLUSTER_CONFIG_SCHEMA)
@@ -143,4 +176,5 @@ def read_cluster_config(path):
     return result
 
 def write_clusters(clusters, path):
+    """Write out the results of clustering to a CSV file."""
     clusters.to_csv(path, index=False)

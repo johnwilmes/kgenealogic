@@ -1,10 +1,11 @@
 [tool.poetry]
 name = "kgenealogic"
-version = "0.1.2"
+version = "0.2.0"
 description = "Genetic genealogy tool for tree structure inference"
 authors = ["John Wilmes <jw@johnwilmes.name>"]
 license = "MIT"
 readme = "README.md"
+include = ["examples/*"]
 
 [tool.poetry.dependencies]
 python = "<3.12,>=3.8"
