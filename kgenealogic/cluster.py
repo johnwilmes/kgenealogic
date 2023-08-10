@@ -147,10 +147,10 @@ def cluster_data(engine, config):
         autox = set()
         for k in raw.get('kits', []):
             kitlocal = int(kits.loc[k['id']])
-            floating = k['float']
+            floating = k.get('float')
             if floating is None:
                 floating = kitlocal not in trisource
-            if k['autox']:
+            if k.get('autox'):
                 with engine.connect() as conn:
                     k_autox = pd.read_sql(autox_query, conn, params=dict(seed=kitlocal))
                 k_autox = set(int(x) for x in k_autox.kit)
@@ -158,7 +158,8 @@ def cluster_data(engine, config):
                 k_autox.difference_update(seeds)
                 seeds.update(k_autox)
                 autox.update(k_autox)
-            parsed.values.append(Seed(kit=kitlocal, floating=floating, negative=k['negative']))
+            negative = k.get('negative', False)
+            parsed.values.append(Seed(kit=kitlocal, floating=floating, negative=negative))
 
         for a, short, long in ((1, 'M', 'maternal'), (0, 'P', 'paternal')):
             if long in raw:
