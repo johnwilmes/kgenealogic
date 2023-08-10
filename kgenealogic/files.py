@@ -1,9 +1,11 @@
 import pandas as pd
-import strictyaml as yaml
+import yaml
 from collections import defaultdict
 from dataclasses import dataclass, field
 import typing
 import typer
+
+DEFAULT_MIN_LENGTH = 7.
 
 GED_MATCH_COLS = {
     'PrimaryKit': 'kit1',
@@ -71,30 +73,6 @@ def read_ged_triangles(path, primary_kit):
     tri['kit1'] = primary_kit
     return tri
 
-# StrictYAML schemas used for cluster config files
-CLUSTER_KIT_SCHEMA = yaml.Str() | yaml.Map({
-    'id': yaml.Str(),
-    yaml.Optional('autox', default=False): yaml.Bool(),
-    yaml.Optional('float', default=None, drop_if_none=False): yaml.EmptyNone() | yaml.Bool(),
-    yaml.Optional('negative', default=None, drop_if_none=False): yaml.EmptyNone() | yaml.Bool(),
-})
-CLUSTER_INCLUDE_SCHEMA = yaml.Str() | yaml.Map({
-    'id': yaml.Str(),
-    yaml.Optional('matches', default=None, drop_if_none=False): yaml.EmptyNone() | yaml.Float(),
-    yaml.Optional('triangles', default=None, drop_if_none=False): yaml.EmptyNone() | yaml.Float(),
-})
-CLUSTER_TREE_SCHEMA = yaml.Map({
-    yaml.Optional('kits'): yaml.EmptyList() | yaml.Seq(CLUSTER_KIT_SCHEMA),
-    yaml.Optional('maternal'): yaml.Any(),
-    yaml.Optional('paternal'): yaml.Any(),
-})
-CLUSTER_CONFIG_SCHEMA = yaml.Map({
-    yaml.Optional('include'): yaml.EmptyList() | yaml.Seq(CLUSTER_INCLUDE_SCHEMA),
-    yaml.Optional('exclude'): yaml.EmptyList() | yaml.UniqueSeq(yaml.Str()),
-    yaml.Optional('min_length'): yaml.Float(),
-    'tree': CLUSTER_TREE_SCHEMA,
-})
-
 @dataclass
 class ClusterConfig:
     """Data structure for storing parsed cluster configuration"""
@@ -104,32 +82,54 @@ class ClusterConfig:
     tree: dict[str, typing.Any]
     seeds: set[str]
 
-def validate_config_tree(config, seeds):
-    """Recursively validate the StrictYAML tree schema and extract all seeds.
+def expect_keys(d, l, error):
+    bad_keys = set(d.keys())
+    bad_keys.difference_update(l)
+    if bad_keys:
+        invalid = bad_keys.pop()
+        typer.echo(error.format(invalid), err=True)
+        raise typer.Exit(code=1)
+
+def parse_config_tree(tree, seeds):
+    """Recursively expand and extract all seeds from YAML config tree
 
     Seeds that appear in the config file as strings are expanded to dictionaries with default
-    values for the keys.
+    values for the keys and reinserted into the tree
 
     Args:
-        config: the StrictYAML document at the current node of the tree
+        tree: the dictionary representing the current node of the tree
         seeds: the list of all encountered seeds
     """
+    expect_keys(tree, ['kits', 'maternal', 'paternal'], 
+                "invalid YAML configuration format: invalid tree key {}")
+
     expanded_kits = []
-    for k in config.data.get('kits', []):
-        if type(k)==str:
-            expanded_kits.append(dict(id=k, autox=False, float=None, negative=False))
+    for k in tree.get('kits', []):
+        if not k:
+            typer.echo(f"invalid (false/missing) tree kits entry", err=True)
+            raise typer.Exit(code=1)
+        elif type(k)!=dict:
+            expanded_kits.append(dict(id=str(k), autox=False, float=None, negative=False))
         else:
+            expect_keys(k, ['id', 'autox', 'float', 'negative'],
+                        "invalid YAML configuration format: invalid tree kits key {}")
             expanded_kits.append(k)
-    config['kits']=expanded_kits
+    tree['kits']=expanded_kits
     seeds.extend(expanded_kits)
 
     for branch in ('maternal', 'paternal'):
-        if branch in config.data:
-            config[branch].revalidate(yaml.EmptyDict() | CLUSTER_TREE_SCHEMA)
-            validate_config_tree(config[branch], seeds)
+        if branch in tree:
+            value = tree[branch]
+            if value:
+                if type(value)!=dict:
+                    typer.echo(f"invalid {branch} branch: {value}", err=True)
+                    raise typer.Exit(code=1)
+                parse_config_tree(tree[branch], seeds)
+            else:
+                tree[branch] = {}
 
 def read_cluster_config(path):
-    """Parse a clustering config file in StrictYAML format.
+    """Parse a clustering config file in YAML format.
 
     The schema is given above in code, and is documented in the cluster CLI command.
 
@@ -140,17 +140,37 @@ def read_cluster_config(path):
         A ClusterConfig object representing the contents of the config file
     """
     with open(path) as f:
-        config_yaml = f.read()
-    parsed = yaml.load(config_yaml, CLUSTER_CONFIG_SCHEMA)
-    seeds = []
-    validate_config_tree(parsed['tree'], seeds)
-    exclude = parsed.data.get('exclude', [])
+        parsed = yaml.safe_load(f)
 
-    include = []
-    for k in parsed.data.get('include', []):
-        if type(k)==str:
-            include.append(dict(id=k, matches=None, triangles=None))
+    if 'min_length' in parsed:
+        min_length = parsed['min_length']
+        if min_length != 0 and not min_length:
+            min_length = DEFAULT_MIN_LENGTH
         else:
+            min_length = float(min_length)
+    else:
+        min_length = DEFAULT_MIN_LENGTH
+
+    tree = dict(parsed.get('tree') or {})
+    exclude = list(parsed.get('exclude') or [])
+
+    seeds = []
+    parse_config_tree(tree, seeds)
+    
+    include = []
+    include_raw = parsed.get('include', []) or []
+    if type(include_raw)!=list:
+        typer.echo(f"invalid include value: expected list", err=True)
+        raise typer.Exit(code=1)
+    for k in include_raw:
+        if not k:
+            typer.echo(f"invalid (false/missing) include list entry", err=True)
+            raise typer.Exit(code=1)
+        elif type(k)!=dict:
+            include.append(dict(id=str(k), matches=None, triangles=None))
+        else:
+            expect_keys(k, ['id', 'matches', 'triangles'],
+                        "invalid YAML configuration format: invalid include item key {}")
             include.append(k)
 
     unique_seeds = set()
@@ -160,17 +180,18 @@ def read_cluster_config(path):
             raise typer.Exit(code=1)
         else:
             unique_seeds.add(s['id'])
+
     exclude_seeds = unique_seeds.intersection(exclude)
     if exclude_seeds:
         k = exclude_seeds.pop()
         typer.echo(f"excluded kit {k} is listed as seed", err=True)
         raise typer.Exit(code=1)
 
-    result =  ClusterConfig(
+    result = ClusterConfig(
         include=include,
         exclude=exclude,
-        min_length=parsed.data.get('min_length', 7.),
-        tree=parsed['tree'].data,
+        min_length=min_length,
+        tree=tree,
         seeds=unique_seeds,
     )
     return result

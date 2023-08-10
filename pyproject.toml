@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kgenealogic"
-version = "0.2.0"
+version = "0.2.1"
 description = "Genetic genealogy tool for tree structure inference"
 authors = ["John Wilmes <jw@johnwilmes.name>"]
 license = "MIT"
@@ -14,7 +14,7 @@ numpy = "^1.24.3"
 pandas = "^2.0.1"
 typer = "^0.9.0"
 sqlalchemy = "^2.0.15"
-strictyaml = "^1.7.3"
+pyyaml = "^6.0.1"
 
 
 [build-system]
