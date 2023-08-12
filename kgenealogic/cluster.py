@@ -236,7 +236,6 @@ def recursive_cluster(kits, tree, graph, source_neg):
             .fillna('')
             .astype(str)
         )
-        #result.label.mask(result.kit.isin(flat_seeds.kit), flat_seeds.label, inplace=True)
         result['confidence'] = result.kit.map(clusters.confidence)
         result['ahnentafel'] = np.select(
             [result.label=='P', result.label=='M'],
@@ -258,7 +257,8 @@ def recursive_cluster(kits, tree, graph, source_neg):
             result_branches.append(branch)
         result = pd.concat(result_branches, ignore_index=True)
     else:
-        result['ahnentafel'] = tree.ahnentafel
+        flat_ahnentafel = flatten(tree)
+        result['ahnentafel'] = result.kit.map(flat_ahnentafel).fillna(tree.ahnentafel)
 
     return result
 
