@@ -80,6 +80,9 @@ def set_segment_lengths(engine):
 
 def as_internal_kitid(engine, data, kitid_fields):
     """Replace external kitid with internal kit number, inserting into kit table as needed."""
+    if len(data)==0:
+        return data
+
     kit_ids = pd.concat([data[c] for c in kitid_fields]).drop_duplicates()
     insert_kit_id = kit.insert().values(kitid=sql.bindparam('kit'))
     select_kit_id = sql.select(kit.c["id", "kitid"])
@@ -96,6 +99,9 @@ def as_internal_kitid(engine, data, kitid_fields):
 def as_internal_segment(engine, data):
     """Replace chromosome/start/end triplet with internal segment id, inserting into segment table
     as needed."""
+    if len(data)==0:
+        return data.assign(segment=-1)
+
     seg_df = (
         data[["chromosome", "start", "end"]]
         .groupby(["chromosome", "start", "end"])
