@@ -392,6 +392,8 @@ def build_negative(engine, s_kit):
     with engine.connect() as conn:
         conn.execute(sql.delete(overlap).where(overlap.c.source==s_kit))
         match_overlap = pd.read_sql(select_overlap, conn)
+    if len(match_overlap)==0:
+        return True
     match_overlap = as_internal_segment(engine, match_overlap)
 
     match_overlap = match_overlap[["target1", "target2", "segment"]]
@@ -416,7 +418,7 @@ def build_negative(engine, s_kit):
             overlap.c.target1==triangle.c.kit2,
             overlap.c.target2==triangle.c.kit3,
         ), isouter=True)
-        .join(seg_tri, triangle.c.segment==seg_tri.c.id)
+        .join(seg_tri, triangle.c.segment==seg_tri.c.id, isouter=True)
         .where(sql.or_(
             seg_tri.c.id.is_(None),
             sql.and_(
@@ -430,6 +432,8 @@ def build_negative(engine, s_kit):
     with engine.connect() as conn:
         neg_overlap = pd.read_sql(select_neg_overlap, conn)
 
+    if len(neg_overlap)==0:
+        return True
     neg_base = (
         neg_overlap[neg_overlap.tri_start.isnull()]
         .drop(columns=["tri_start", "tri_end"])
@@ -457,6 +461,8 @@ def build_negative(engine, s_kit):
     neg_tri = pd.concat([neg_base, pd.DataFrame(neg_remain)], ignore_index=True).drop_duplicates()
     neg_tri = as_internal_segment(engine, neg_tri).drop_duplicates()
     neg_tri = neg_tri[["overlap", "segment"]].rename(columns=dict(segment="neg_segment"))
+    if len(neg_tri)==0:
+        return True
     with engine.connect() as conn:
         conn.execute(negative.insert(), neg_tri.to_dict(orient="records"))
         conn.execute(update_source)
