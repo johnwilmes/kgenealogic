@@ -20,19 +20,26 @@ tree:
       float: false
       negative: true
     -
-      # a nephew
+      # my sister's son
       id: T000002
       float: false
   paternal:
     kits:
-      - T000005 # my father's grand-niece
+      -
+        id: T000005 # my father's grand-niece
+        float: false
+      -
+        id: T000006 # my father's sister (but not the grandmother of T000005)
+        float: false
+        negative: true
     paternal:
       kits:
-        - T000006 # a distant cousin on my paternal grandfather's side
+        - T000007 # a distant cousin on my paternal grandfather's side
     maternal:
       # I don't know any relatives of my paternal grandmother, but I'd like any that are
       # discovered to be present in the output
   maternal:
     kits:
-      - T000006 # a relative of my mother, but not my father, with no other information
+      - T000008 # a relative of my mother, but not my father, with no other information
 
+# recommended to add matches and triangulations for T000001, T000002, T000006, and perhaps T000005
