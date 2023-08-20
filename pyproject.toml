@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kgenealogic"
-version = "0.2.3"
+version = "0.2.4"
 description = "Genetic genealogy tool for tree structure inference"
 authors = ["John Wilmes <jw@johnwilmes.name>"]
 license = "MIT"

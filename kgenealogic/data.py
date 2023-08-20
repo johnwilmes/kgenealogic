@@ -120,10 +120,22 @@ def as_internal_segment(engine, data):
 
 def update_kit_data(engine, kit_data):
     """Update name/email/sex fields of kit table"""
+    if len(kit_data)==0:
+        return
+    
+    # get current kit data to fill na values in kit_data
+    with engine.connect() as conn:
+        default_data = pd.read_sql(sql.select(kit), conn)
+
+    default_data = default_data.set_index("id")
+    kit_data = kit_data.copy()
+    kit_data.name.mask(kit_data.name.isnull(), kit_data.kit.map(default_data.name), inplace=True)
+    kit_data.email.mask(kit_data.email.isnull(), kit_data.kit.map(default_data.email), inplace=True)
+    kit_data.sex.mask(kit_data.sex.isnull(), kit_data.kit.map(default_data.sex), inplace=True)
+
     insert_kit_data = (
         kit.update()
         .where(kit.c.id==sql.bindparam("kit"))
-        .where(kit.c.sex.is_(None))
         .values(
             name=sql.bindparam("name"),
             email=sql.bindparam("email"),
@@ -200,7 +212,6 @@ def import_triangles(engine, data):
                 columns=dict(kit3='kit', name3='name', email3='email')
             ),
         ], ignore_index=True)
-        .dropna()
         .drop_duplicates()
     )
     kit_data['sex'] = None
